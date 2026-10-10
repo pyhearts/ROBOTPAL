@@ -85,7 +85,7 @@ def run_live_transcription(
             f"모델 저장 공간이 필요합니다. 상세 정보: {exc}"
         ) from exc
 
-    audio_blocks: "queue.Queue[object]" = queue.Queue()
+    audio_blocks: "queue.Queue[np.ndarray]" = queue.Queue()
     utterances: "queue.Queue[object]" = queue.Queue()
     worker = threading.Thread(
         target=_transcription_worker,
@@ -96,17 +96,17 @@ def run_live_transcription(
     worker.start()
 
     def capture_audio(
-        indata: "object", frames: int, time_info: object, status: object
+        indata: "np.ndarray", frames: int, time_info: object, status: object
     ) -> None:
         if status:
             print(f"마이크 상태: {status}", file=sys.stderr)
-        audio_blocks.put(indata.copy())  # type: ignore[attr-defined]
+        audio_blocks.put(indata.copy())
 
     block_seconds = BLOCK_SIZE / SAMPLE_RATE
-    pre_roll: deque["object"] = deque(
+    pre_roll: deque["np.ndarray"] = deque(
         maxlen=max(1, round(PRE_ROLL_SECONDS / block_seconds))
     )
-    current: list["object"] = []
+    current: list["np.ndarray"] = []
     speech_seconds = 0.0
     silence_seconds = 0.0
 
