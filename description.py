@@ -6,7 +6,7 @@ import queue
 import sys
 import threading
 from collections import deque
-from typing import Callable
+from typing import Any, Callable
 
 
 SAMPLE_RATE = 16_000
@@ -18,17 +18,17 @@ MAX_UTTERANCE_SECONDS = 12.0
 PRE_ROLL_SECONDS = 0.2
 MODEL_NAME = "small"
 
-
-def transcribe_utterance(model: object, audio: "object") -> str:
+def transcribe_utterance(model: Any, audio: "object") -> str:
     """Return the recognized text for one audio segment, or an empty string."""
-    segments, _ = model.transcribe(  # type: ignore[attr-defined]
+    segments, _ = model.transcribe(
         audio,
         language="ko",
         beam_size=1,
         vad_filter=True,
     )
     return " ".join(segment.text.strip() for segment in segments).strip()
-
+    #.strip() | 문자열 앞뒤의 붙은 공백이나 줄바꿈 문자 제거
+    #" ".join() | 객체 사이에 공백을 넣고 합치기
 
 def handle_transcription(text: str) -> None:
     """Deliver a final transcript; connect robot command handling here later."""
@@ -36,18 +36,27 @@ def handle_transcription(text: str) -> None:
 
 
 def _transcription_worker(
-    model: object,
+    model: Any,
     utterances: "queue.Queue[object]",
+    #queue.Queue | 스레드 선입선출 큐 (FIFO)
+    #object | python의 대부분의 값
     on_transcription: Callable[[str], None],
+    #Callable[[str], None] | str을 받지만 값을 돌려주지는 않음
 ) -> None:
     while True:
         audio = utterances.get()
+        #utterances.get() | utterances 큐에서 항목 하나를 꺼내 audio에 저장
+        #.get() | 큐가 없으면 들어올때까지 기다림
         try:
+        #try | 코드 실행 후, 오류나면 처리
             if audio is None:
                 return
             try:
                 text = transcribe_utterance(model, audio)
-            except Exception as exc:  # Keep listening if one utterance fails.
+            except Exception as exc:
+            #except | try와 같은 들여쓰기 위치에 작성
+            #Exception | 대부분의 오류
+            #as exc | 오류 객체를 exc에 저장
                 print(f"음성 구간을 인식하지 못했습니다: {exc}", file=sys.stderr)
                 continue
             if text:
@@ -56,7 +65,9 @@ def _transcription_worker(
                 except Exception as exc:
                     print(f"인식 결과 전달 중 오류가 발생했습니다: {exc}", file=sys.stderr)
         finally:
+        #finally | 어떤 일이 있어도 finally안의 코드는 실행
             utterances.task_done()
+            #.task_done() | 항목 완료 처리
 
 
 def run_live_transcription(

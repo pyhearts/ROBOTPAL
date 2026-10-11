@@ -165,13 +165,11 @@ def run_live_transcription(
         worker.join()
 
 
-def main() -> int:
+def main():
     try:
         run_live_transcription()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
-        return 1
-    return 0
 
 
 if __name__ == "__main__":
