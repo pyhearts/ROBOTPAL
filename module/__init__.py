@@ -1,1 +1,1 @@
-"""ROBOTPAL voice and gesture feature package."""
+"""ROBOTPAL voice, gesture, and robot action planning features."""

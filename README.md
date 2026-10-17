@@ -46,10 +46,25 @@ Python 3.12 가상환경에서 의존성을 설치합니다.
 
 `--rule-set numbers`에서는 21개 손 관절 좌표로 `Number_1`부터 `Number_5`, `OK`를 우선 판정합니다. 숫자 3은 검지·중지·약지 또는 엄지·검지·중지 조합을 모두 허용합니다. 규칙 결과의 confidence `1.0`은 학습 모델의 확률이 아니라 규칙에 명확히 일치했다는 뜻입니다. 숫자 모드에서 규칙이 불확실하면 `Pointing_Up`, `Victory`, `Open_Palm`은 출력하지 않아 숫자 라벨과의 흔들림을 방지합니다.
 
+## AI 행동 계획
+
+AI 계획기는 텍스트 명령을 받아 8족 로봇의 상위 행동 단계를 한국어로 반환합니다. 현재 기능은 계획만 생성하며 서보나 로봇을 직접 제어하지 않습니다. 사용하기 전에 `OPENAI_API_KEY` 환경 변수를 설정하세요. 명령은 입력창에서 받거나 인자로 전달할 수 있습니다.
+
+```powershell
+# 대화형으로 명령 입력
+.\.venv\Scripts\python.exe .\main.py --plan
+
+# 명령을 인자로 전달
+.\.venv\Scripts\python.exe .\main.py --plan --command "앞으로 30cm 이동해"
+```
+
+다른 Python 코드에서는 `from module.action_planner import create_action_plan`으로 계획 기능을 가져올 수 있습니다. 결과는 `ActionPlan`이며 `status`, `summary`, `steps`, `error` 필드를 제공합니다. 예전 `ai_action_planner.py` 진입점도 호환을 위해 유지합니다.
+
 ## 코드 구조
 
 - `main.py`: 짧은 명령행 진입점이며 기존 공개 함수도 다시 제공합니다.
 - `module/`: 애플리케이션 기능 모듈을 묶는 Python 패키지입니다.
+  - `action_planner.py`: AI 텍스트 명령을 검증된 행동 계획으로 변환합니다.
   - `speech.py`: 음성 분리, 화자 등록·식별, 발화 종료와 전사를 담당합니다.
   - `gesture.py`: 카메라 입력, MediaPipe 결과 안정화와 미리보기를 담당합니다.
   - `gesture_rules.py`: 숫자와 OK 모양의 순수 관절 좌표 규칙을 담습니다.
