@@ -1,11 +1,10 @@
-"""Deterministic hand-pose rules built from MediaPipe's 21 landmarks."""
+"""Static hand-gesture rules based on MediaPipe's 21 landmarks."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from typing import Sequence
-
 
 EXTENDED = "extended"
 FOLDED = "folded"

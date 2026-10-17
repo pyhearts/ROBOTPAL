@@ -1,13 +1,7 @@
-"""Recognize one hand's static gesture from a webcam.
-
-This module is intentionally independent from the microphone pipeline in
-``main.py``.  Applications can supply ``on_gesture`` to connect stable gesture
-events to robot commands later.
-"""
+"""Webcam gesture recognition and event stabilization."""
 
 from __future__ import annotations
 
-import argparse
 import queue
 import sys
 import threading
@@ -16,10 +10,9 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
-from gesture_rules import FINGER_NAMES, RuleResult, classify_landmarks
-
+from .gesture_rules import RuleResult, classify_landmarks
 
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/"
@@ -510,32 +503,3 @@ def run_gesture_recognition(
         capture.release()
         if preview:
             cv2.destroyAllWindows()
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--camera", type=int, default=0, help="사용할 카메라 번호 (기본값: 0)")
-    parser.add_argument("--preview", action="store_true", help="랜드마크 미리보기 창을 표시합니다.")
-    parser.add_argument(
-        "--rule-set",
-        choices=RULE_SETS,
-        default="basic",
-        help="손 모양 규칙 모드 (기본값: basic)",
-    )
-    args = parser.parse_args(argv)
-    if args.camera < 0:
-        parser.error("--camera는 0 이상의 정수여야 합니다.")
-    try:
-        run_gesture_recognition(
-            camera_index=args.camera,
-            preview=args.preview,
-            rule_set=args.rule_set,
-        )
-    except (RuntimeError, ValueError) as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
