@@ -1,0 +1,431 @@
+"""Testable streaming primitives for two-speaker microphone transcription."""
+
+from __future__ import annotations
+
+import json
+import math
+import time
+import uuid
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Sequence
+
+import numpy as np
+
+
+SAMPLE_RATE = 16_000
+WINDOW_SECONDS = 4.0
+HOP_SECONDS = 3.0
+OVERLAP_SECONDS = WINDOW_SECONDS - HOP_SECONDS
+SILENCE_SECONDS = 0.7
+MIN_SPEECH_SECONDS = 0.25
+PARTIAL_SECONDS = 20.0
+PRE_ROLL_SECONDS = 0.2
+VAD_BLOCK_SAMPLES = 1_024
+VAD_THRESHOLD = 0.012
+UNKNOWN_SPEAKER = "기타"
+
+
+def _unit(vector: np.ndarray) -> np.ndarray:
+    value = np.asarray(vector, dtype=np.float32).reshape(-1)
+    norm = float(np.linalg.norm(value))
+    if not math.isfinite(norm) or norm == 0.0:
+        raise ValueError("빈 음성 지문입니다.")
+    return value / norm
+
+
+def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
+    return float(np.dot(_unit(left), _unit(right)))
+
+
+@dataclass(frozen=True)
+class SpeakerProfile:
+    name: str
+    embedding: np.ndarray
+
+
+class ProfileStore:
+    """Read and atomically write voiceprints without storing source audio."""
+
+    @staticmethod
+    def save(path: Path, profiles: Sequence[SpeakerProfile], model_name: str, model_version: str) -> None:
+        if len(profiles) != 2:
+            raise ValueError("정확히 두 명의 화자 지문이 필요합니다.")
+        names = [profile.name.strip() for profile in profiles]
+        if any(not name for name in names) or len(set(names)) != 2:
+            raise ValueError("서로 다른 두 화자 이름이 필요합니다.")
+        payload = {
+            "schema_version": 1,
+            "model": model_name,
+            "model_version": model_version,
+            "speakers": [
+                {"name": profile.name, "embedding": _unit(profile.embedding).tolist()}
+                for profile in profiles
+            ],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def load(path: Path, expected_model: str) -> list[SpeakerProfile]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("schema_version") != 1:
+                raise ValueError("지원하지 않는 등록 파일 형식")
+            if payload.get("model") != expected_model:
+                raise ValueError("등록에 사용한 지문 모델이 현재 설정과 다름")
+            speakers = payload["speakers"]
+            if not isinstance(speakers, list) or len(speakers) != 2:
+                raise ValueError("화자 수가 2명이 아님")
+            profiles = [
+                SpeakerProfile(str(item["name"]).strip(), _unit(item["embedding"]))
+                for item in speakers
+            ]
+            if any(not profile.name for profile in profiles):
+                raise ValueError("빈 화자 이름")
+            if len({profile.name for profile in profiles}) != 2:
+                raise ValueError("중복 화자 이름")
+            if len({len(profile.embedding) for profile in profiles}) != 1:
+                raise ValueError("지문 차원이 서로 다름")
+            return profiles
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"화자 등록 파일을 읽을 수 없습니다: {exc}") from exc
+
+
+class RegisteredSpeakerIdentifier:
+    def __init__(self, profiles: Sequence[SpeakerProfile], embedder: Callable[[np.ndarray], np.ndarray], threshold: float = 0.45, margin: float = 0.08) -> None:
+        if len(profiles) != 2:
+            raise ValueError("두 개의 등록 화자 지문이 필요합니다.")
+        self.profiles = list(profiles)
+        self.embedder = embedder
+        self.threshold = threshold
+        self.margin = margin
+
+    def identify_embedding(self, embedding: np.ndarray) -> str:
+        scores = [cosine_similarity(profile.embedding, embedding) for profile in self.profiles]
+        order = np.argsort(scores)[::-1]
+        best, second = int(order[0]), int(order[1])
+        # Cosine scores are float32 in production; tolerate only representation
+        # error so the documented inclusive boundaries remain inclusive.
+        epsilon = 1e-6
+        if scores[best] + epsilon >= self.threshold and scores[best] - scores[second] + epsilon >= self.margin:
+            return self.profiles[best].name
+        return UNKNOWN_SPEAKER
+
+    def identify(self, audio: np.ndarray) -> str:
+        return self.identify_embedding(self.embedder(np.asarray(audio, dtype=np.float32)))
+
+
+def _wave_correlation(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=np.float32).reshape(-1)
+    right = np.asarray(right, dtype=np.float32).reshape(-1)
+    size = min(len(left), len(right))
+    if size == 0:
+        return 0.0
+    left, right = left[:size], right[:size]
+    left = left - float(np.mean(left))
+    right = right - float(np.mean(right))
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    return float(np.dot(left, right) / denominator) if denominator > 1e-8 else 0.0
+
+
+def _rms(audio: np.ndarray) -> float:
+    value = np.asarray(audio, dtype=np.float32)
+    return float(np.sqrt(np.mean(np.square(value)))) if value.size else 0.0
+
+
+class ChannelLinker:
+    """Keep SepFormer output channels stable across overlapping windows."""
+
+    def __init__(self, overlap_samples: int, embedder: Callable[[np.ndarray], np.ndarray] | None = None, waveform_weight: float = 0.7) -> None:
+        self.overlap_samples = overlap_samples
+        self.embedder = embedder
+        self.waveform_weight = waveform_weight
+        self.previous_tail: np.ndarray | None = None
+        self.previous_embeddings: list[np.ndarray | None] = [None, None]
+
+    def reset(self) -> None:
+        self.previous_tail = None
+        self.previous_embeddings = [None, None]
+
+    def _embedding(self, audio: np.ndarray) -> np.ndarray | None:
+        if self.embedder is None or _rms(audio) < 0.002:
+            return None
+        try:
+            return _unit(self.embedder(audio))
+        except Exception:
+            return None
+
+    def link(self, channels: np.ndarray) -> np.ndarray:
+        channels = np.asarray(channels, dtype=np.float32)
+        if channels.ndim != 2 or channels.shape[0] != 2:
+            raise ValueError(f"분리 결과는 (2, samples)여야 합니다: {channels.shape}")
+        current_embeddings = [self._embedding(channels[index]) for index in range(2)]
+        order = (0, 1)
+        if self.previous_tail is not None:
+            scores = np.zeros((2, 2), dtype=np.float32)
+            for previous in range(2):
+                for current in range(2):
+                    wave = _wave_correlation(self.previous_tail[previous], channels[current, : self.overlap_samples])
+                    voice = 0.0
+                    if self.previous_embeddings[previous] is not None and current_embeddings[current] is not None:
+                        voice = cosine_similarity(self.previous_embeddings[previous], current_embeddings[current])
+                    scores[previous, current] = self.waveform_weight * wave + (1.0 - self.waveform_weight) * voice
+            if float(scores[0, 1] + scores[1, 0]) > float(scores[0, 0] + scores[1, 1]):
+                order = (1, 0)
+        linked = channels[list(order)].copy()
+        self.previous_tail = linked[:, -self.overlap_samples :].copy()
+        self.previous_embeddings = [current_embeddings[index] for index in order]
+        return linked
+
+
+def suppress_quiet_leakage(channels: np.ndarray, absolute_threshold: float = 0.0025, relative_threshold: float = 0.12) -> np.ndarray:
+    result = np.asarray(channels, dtype=np.float32).copy()
+    levels = [_rms(result[index]) for index in range(2)]
+    loud = max(levels)
+    if loud == 0.0:
+        return result
+    quiet = int(np.argmin(levels))
+    if levels[quiet] < absolute_threshold or levels[quiet] / loud < relative_threshold:
+        result[quiet].fill(0.0)
+    return result
+
+
+class StreamingSeparator:
+    """4 s windows / 3 s hops with permutation linking and overlap-add."""
+
+    def __init__(self, separate: Callable[[np.ndarray], np.ndarray], embedder: Callable[[np.ndarray], np.ndarray] | None = None, sample_rate: int = SAMPLE_RATE) -> None:
+        self.separate = separate
+        self.sample_rate = sample_rate
+        self.window_samples = round(WINDOW_SECONDS * sample_rate)
+        self.hop_samples = round(HOP_SECONDS * sample_rate)
+        self.overlap_samples = self.window_samples - self.hop_samples
+        self.linker = ChannelLinker(self.overlap_samples, embedder)
+        self.buffer = np.empty(0, dtype=np.float32)
+        self.held_tail: np.ndarray | None = None
+        self.output_position = 0
+
+    def _run_model(self, window: np.ndarray) -> np.ndarray:
+        failure: Exception | None = None
+        for _ in range(2):
+            try:
+                result = np.asarray(self.separate(window), dtype=np.float32)
+                if result.shape == (self.window_samples, 2):
+                    result = result.T
+                if result.shape != (2, self.window_samples):
+                    raise ValueError(f"예상하지 못한 분리 결과 크기: {result.shape}")
+                return result
+            except Exception as exc:
+                failure = exc
+        assert failure is not None
+        raise failure
+
+    def push(self, mono: np.ndarray) -> list[tuple[int, np.ndarray]]:
+        self.buffer = np.concatenate([self.buffer, np.asarray(mono, dtype=np.float32).reshape(-1)])
+        outputs: list[tuple[int, np.ndarray]] = []
+        while len(self.buffer) >= self.window_samples:
+            window = self.buffer[: self.window_samples]
+            try:
+                linked = suppress_quiet_leakage(self.linker.link(self._run_model(window)))
+            except Exception as exc:
+                print(f"분리 창 처리에 두 번 실패해 건너뜁니다: {exc}")
+                self.linker.reset()
+                self.held_tail = None
+                # Emit silence rather than a mixture. Besides preserving the
+                # timeline, this lets each stream's VAD close an active phrase.
+                outputs.append(
+                    (
+                        self.output_position,
+                        np.zeros((2, self.hop_samples), dtype=np.float32),
+                    )
+                )
+                self.buffer = self.buffer[self.hop_samples :]
+                self.output_position += self.hop_samples
+                continue
+            if self.held_tail is None:
+                output = linked[:, : self.hop_samples]
+            else:
+                fade = np.linspace(0.0, 1.0, self.overlap_samples, dtype=np.float32)
+                blended = self.held_tail * (1.0 - fade) + linked[:, : self.overlap_samples] * fade
+                output = np.concatenate([blended, linked[:, self.overlap_samples : self.hop_samples]], axis=1)
+            outputs.append((self.output_position, output))
+            self.held_tail = linked[:, self.hop_samples :].copy()
+            self.buffer = self.buffer[self.hop_samples :]
+            self.output_position += self.hop_samples
+        return outputs
+
+    def flush(self) -> list[tuple[int, np.ndarray]]:
+        actual = len(self.buffer)
+        if actual == 0:
+            return []
+        start = self.output_position
+        if self.held_tail is not None and actual <= self.overlap_samples:
+            output = self.held_tail[:, :actual]
+        else:
+            padded = np.pad(self.buffer, (0, max(0, self.window_samples - actual)))
+            try:
+                linked = suppress_quiet_leakage(self.linker.link(self._run_model(padded)))
+            except Exception as exc:
+                print(f"마지막 분리 창 처리에 두 번 실패해 건너뜁니다: {exc}")
+                self.reset()
+                return []
+            if self.held_tail is None:
+                output = linked[:, :actual]
+            else:
+                overlap = min(self.overlap_samples, actual)
+                fade = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+                blended = self.held_tail[:, :overlap] * (1.0 - fade) + linked[:, :overlap] * fade
+                output = np.concatenate([blended, linked[:, overlap:actual]], axis=1)
+        self.reset()
+        return [(start, output)]
+
+    def reset(self) -> None:
+        self.buffer = np.empty(0, dtype=np.float32)
+        self.held_tail = None
+        self.linker.reset()
+
+
+@dataclass
+class TranscriptionTask:
+    utterance_id: str
+    stream_id: int
+    audio: np.ndarray
+    final: bool
+    end_time: float
+    identity_audio: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+
+
+class _StreamState:
+    def __init__(self, stream_id: int, sample_rate: int) -> None:
+        self.stream_id = stream_id
+        self.sample_rate = sample_rate
+        self.pre_roll: deque[np.ndarray] = deque(maxlen=max(1, round(PRE_ROLL_SECONDS * sample_rate / VAD_BLOCK_SAMPLES)))
+        self.active = False
+        self.parts: list[np.ndarray] = []
+        self.identity_parts: list[np.ndarray] = []
+        self.identity_samples = 0
+        self.buffered_samples = 0
+        self.speech_samples = 0
+        self.silence_samples = 0
+        self.utterance_id = ""
+
+    def _clear(self) -> None:
+        self.active = False
+        self.parts.clear()
+        self.identity_parts.clear()
+        self.identity_samples = self.buffered_samples = self.speech_samples = self.silence_samples = 0
+        self.utterance_id = ""
+        self.pre_roll.clear()
+
+    def _audio(self) -> np.ndarray:
+        return np.concatenate(self.parts) if self.parts else np.empty(0, dtype=np.float32)
+
+    def _identity_audio(self) -> np.ndarray:
+        return np.concatenate(self.identity_parts) if self.identity_parts else np.empty(0, dtype=np.float32)
+
+    def feed(self, block: np.ndarray, end_time: float) -> list[TranscriptionTask]:
+        block = np.asarray(block, dtype=np.float32).reshape(-1)
+        voiced = _rms(block) >= VAD_THRESHOLD
+        tasks: list[TranscriptionTask] = []
+        if not self.active:
+            self.pre_roll.append(block)
+            if not voiced:
+                return tasks
+            self.active = True
+            self.utterance_id = uuid.uuid4().hex
+            self.parts = list(self.pre_roll)
+            self.buffered_samples = sum(len(item) for item in self.parts)
+            self.speech_samples = len(block)
+            self.silence_samples = 0
+        else:
+            self.parts.append(block)
+            self.buffered_samples += len(block)
+            if voiced:
+                self.speech_samples += len(block)
+                self.silence_samples = 0
+            else:
+                self.silence_samples += len(block)
+        if voiced and self.identity_samples < 8 * self.sample_rate:
+            remaining = 8 * self.sample_rate - self.identity_samples
+            kept = block[:remaining].copy()
+            self.identity_parts.append(kept)
+            self.identity_samples += len(kept)
+        if self.buffered_samples >= round(PARTIAL_SECONDS * self.sample_rate):
+            tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), False, end_time))
+            self.parts.clear()
+            self.buffered_samples = 0
+        if self.silence_samples >= round(SILENCE_SECONDS * self.sample_rate):
+            if self.speech_samples >= round(MIN_SPEECH_SECONDS * self.sample_rate):
+                tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time, self._identity_audio()))
+            self._clear()
+        return tasks
+
+    def flush(self, end_time: float) -> list[TranscriptionTask]:
+        if not self.active or self.speech_samples < round(MIN_SPEECH_SECONDS * self.sample_rate):
+            self._clear()
+            return []
+        task = TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time, self._identity_audio())
+        self._clear()
+        return [task]
+
+
+class PerStreamUtteranceDetector:
+    """Independent VAD and end-of-utterance state for two separated streams."""
+
+    def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
+        self.sample_rate = sample_rate
+        self.states = [_StreamState(0, sample_rate), _StreamState(1, sample_rate)]
+
+    def process(self, streams: np.ndarray, start_time: float) -> list[TranscriptionTask]:
+        streams = np.asarray(streams, dtype=np.float32)
+        if streams.ndim != 2 or streams.shape[0] != 2:
+            raise ValueError("두 개의 분리 스트림이 필요합니다.")
+        tasks: list[TranscriptionTask] = []
+        for offset in range(0, streams.shape[1], VAD_BLOCK_SAMPLES):
+            block_end = min(offset + VAD_BLOCK_SAMPLES, streams.shape[1])
+            end_time = start_time + block_end / self.sample_rate
+            block_tasks: list[TranscriptionTask] = []
+            for stream_id, state in enumerate(self.states):
+                block_tasks.extend(state.feed(streams[stream_id, offset:block_end], end_time))
+            tasks.extend(sorted(block_tasks, key=lambda task: task.end_time))
+        return tasks
+
+    def flush(self, end_time: float | None = None) -> list[TranscriptionTask]:
+        when = time.monotonic() if end_time is None else end_time
+        tasks = [task for state in self.states for task in state.flush(when)]
+        return sorted(tasks, key=lambda task: task.end_time)
+
+
+def average_chunk_embeddings(audio: np.ndarray, embedder: Callable[[np.ndarray], np.ndarray], sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    chunk_samples = 2 * sample_rate
+    embeddings: list[np.ndarray] = []
+    for start in range(0, len(audio), chunk_samples):
+        chunk = audio[start : start + chunk_samples]
+        if len(chunk) >= sample_rate and _rms(chunk) >= 0.005:
+            embeddings.append(_unit(embedder(chunk)))
+    if not embeddings:
+        raise ValueError("지문을 만들 수 있는 유효 음성이 없습니다.")
+    return _unit(np.mean(embeddings, axis=0))
+
+
+def validate_enrollment_audio(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> tuple[bool, str]:
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if _rms(audio) < 0.005:
+        return False, "입력 음량이 너무 작습니다. 마이크에 조금 더 가까이 말해 주세요."
+    if float(np.mean(np.abs(audio) >= 0.98)) > 0.002:
+        return False, "입력이 클리핑되었습니다. 마이크에서 조금 떨어져 다시 말해 주세요."
+    voiced = 0
+    for start in range(0, len(audio), VAD_BLOCK_SAMPLES):
+        block = audio[start : start + VAD_BLOCK_SAMPLES]
+        if _rms(block) >= VAD_THRESHOLD:
+            voiced += len(block)
+    if voiced < round(6.0 * sample_rate):
+        return False, "유효 음성이 6초보다 짧습니다. 쉬지 말고 약 8초간 말해 주세요."
+    return True, ""

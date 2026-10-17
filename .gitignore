@@ -1,0 +1,5 @@
+.venv/
+models/
+data/speaker_profiles.json
+__pycache__/
+*.py[cod]
