@@ -4,18 +4,11 @@ from __future__ import annotations
 
 import sys
 
-from openai import (
-    APIConnectionError,
-    APIStatusError,
-    AuthenticationError,
-    OpenAIError,
-    RateLimitError,
-)
-
 from module.action_planner import (
     ActionPlan,
     DEFAULT_MODEL,
     PLANNER_INSTRUCTIONS,
+    PlannerConnectionError,
     PlannerResponseError,
     _friendly_api_error,
     create_action_plan,
@@ -36,8 +29,6 @@ def main() -> int:
         print("\n입력이 취소되었습니다.", file=sys.stderr)
     except (PlannerResponseError, RuntimeError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
-    except OpenAIError as exc:
-        print(f"오류: {_friendly_api_error(exc)}", file=sys.stderr)
     return 1
 
 

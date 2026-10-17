@@ -1,1 +1,1 @@
-"""ROBOTPAL voice, gesture, and robot action planning features."""
+"""ROBOTPAL voice, gesture, and local voice/vision robot planning features."""

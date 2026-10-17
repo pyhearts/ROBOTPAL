@@ -58,6 +58,8 @@ class ProfileStore:
         names = [profile.name.strip() for profile in profiles]
         if any(not name for name in names) or len(set(names)) != 2:
             raise ValueError("서로 다른 두 화자 이름이 필요합니다.")
+        if UNKNOWN_SPEAKER in names:
+            raise ValueError("'기타'는 미등록 화자를 위한 예약 이름입니다.")
         payload = {
             "schema_version": 1,
             "model": model_name,
@@ -94,6 +96,8 @@ class ProfileStore:
                 raise ValueError("빈 화자 이름")
             if len({profile.name for profile in profiles}) != 2:
                 raise ValueError("중복 화자 이름")
+            if any(profile.name == UNKNOWN_SPEAKER for profile in profiles):
+                raise ValueError("'기타'는 화자 이름으로 사용할 수 없음")
             if len({len(profile.embedding) for profile in profiles}) != 1:
                 raise ValueError("지문 차원이 서로 다름")
             return profiles
@@ -506,18 +510,31 @@ def _load_runtime_dependencies():
     return sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy
 
 
-def _load_voice_models(torch, SepformerSeparation, SpeakerRecognition, LocalStrategy):
+def _load_voice_models(torch, SepformerSeparation, SpeakerRecognition, LocalStrategy, *, offline=False):
     try:
+        fetch_options = {}
+        if offline:
+            from speechbrain.utils.fetching import FetchConfig
+
+            fetch_options["fetch_config"] = FetchConfig(allow_network=False)
         speaker_model = SpeakerRecognition.from_hparams(
             source=SPEAKER_MODEL_NAME, savedir=str(MODEL_ROOT / "spkrec-ecapa-voxceleb"),
             run_opts={"device": "cpu"}, local_strategy=LocalStrategy.COPY,
+            **fetch_options,
         )
         separator_model = SepformerSeparation.from_hparams(
             source=SEPARATION_MODEL_NAME, savedir=str(MODEL_ROOT / "sepformer-whamr16k"),
             run_opts={"device": "cpu"}, local_strategy=LocalStrategy.COPY,
+            **fetch_options,
         )
         return EcapaEmbedder(speaker_model, torch), SepformerAdapter(separator_model, torch)
     except Exception as exc:
+        if offline:
+            raise RuntimeError(
+                "로컬 음성 분리 또는 화자 모델을 준비하지 못했습니다. "
+                "인터넷을 사용할 수 있을 때 기본 음성 전사 모드(main.py)를 한 번 실행해 "
+                f"모델을 준비해 주세요. 통합 모드에서는 다운로드하지 않습니다. 상세 정보: {exc}"
+            ) from exc
         raise RuntimeError(
             "음성 분리 또는 화자 지문 모델을 준비하지 못했습니다. 첫 실행에는 인터넷 연결과 "
             f"모델 저장 공간이 필요합니다. 상세 정보: {exc}"
@@ -540,9 +557,9 @@ def enroll_speakers() -> None:
     for number in range(1, 3):
         while True:
             name = input(f"{number}번째 화자 이름: ").strip()
-            if name and name not in used_names:
+            if name and name not in used_names and name != UNKNOWN_SPEAKER:
                 break
-            print("비어 있지 않은 서로 다른 이름을 입력해 주세요.")
+            print("'기타'를 제외한 비어 있지 않은 서로 다른 이름을 입력해 주세요.")
         while True:
             input(f"{name} 님: 준비되면 Enter를 누르고 약 8초 동안 계속 말해 주세요. ")
             print("녹음 중...")
@@ -616,20 +633,46 @@ def _separation_worker(separator: StreamingSeparator, captured: "queue.Queue[np.
             captured.task_done()
 
 
-def run_live_transcription(on_transcription: Callable[[str, str], None] = handle_transcription) -> None:
+def load_speaker_profiles() -> list[SpeakerProfile]:
+    """Load the two registered profiles used for identification and AI authorization."""
     if not PROFILE_PATH.exists():
         raise RuntimeError("등록된 화자 지문이 없습니다. 마이크 실행 전에 다음 명령을 실행해 주세요.\n.\\.venv\\Scripts\\python.exe .\\main.py --enroll")
     try:
-        profiles = ProfileStore.load(PROFILE_PATH, SPEAKER_MODEL_NAME)
+        return ProfileStore.load(PROFILE_PATH, SPEAKER_MODEL_NAME)
     except ValueError as exc:
         raise RuntimeError(f"화자 등록 파일이 없거나 손상되었습니다: {exc}\n.\\.venv\\Scripts\\python.exe .\\main.py --enroll") from exc
+
+
+def run_live_transcription(
+    on_transcription: Callable[[str, str], None] = handle_transcription,
+    *,
+    offline: bool = False,
+) -> None:
+    profiles = load_speaker_profiles()
     sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy = _load_runtime_dependencies()
     print("음성 분리 모델과 화자 지문 모델을 준비합니다.")
-    embedder, separate = _load_voice_models(torch, SepformerSeparation, SpeakerRecognition, LocalStrategy)
+    embedder, separate = _load_voice_models(
+        torch, SepformerSeparation, SpeakerRecognition, LocalStrategy, offline=offline
+    )
     print(f"한국어 Whisper 모델({WHISPER_MODEL_NAME})을 준비합니다.")
     try:
-        whisper = WhisperModel(WHISPER_MODEL_NAME, device="cpu", compute_type="int8")
+        whisper_source = WHISPER_MODEL_NAME
+        if offline:
+            from faster_whisper.utils import download_model
+
+            whisper_source = download_model(WHISPER_MODEL_NAME, local_files_only=True)
+            # Whisper otherwise falls back to an online tokenizer even with local weights.
+            if not (Path(whisper_source) / "tokenizer.json").is_file():
+                raise RuntimeError("로컬 Whisper tokenizer.json이 없습니다.")
+        whisper = WhisperModel(
+            whisper_source, device="cpu", compute_type="int8", local_files_only=offline
+        )
     except Exception as exc:
+        if offline:
+            raise RuntimeError(
+                "로컬 Whisper 모델을 준비하지 못했습니다. 인터넷을 사용할 수 있을 때 "
+                f"기본 음성 전사 모드(main.py)를 한 번 실행해 주세요. 상세 정보: {exc}"
+            ) from exc
         raise RuntimeError(f"Whisper 모델을 준비하지 못했습니다: {exc}") from exc
     started = time.perf_counter()
     separate(np.zeros(round(4.0 * SAMPLE_RATE), dtype=np.float32))
