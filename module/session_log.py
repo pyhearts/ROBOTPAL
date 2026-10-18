@@ -27,6 +27,10 @@ def _now() -> str:
 def as_json(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
+    if isinstance(value, (list, tuple)):
+        return [as_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: as_json(item) for key, item in value.items()}
     return value
 
 

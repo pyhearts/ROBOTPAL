@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from .session_log import as_json, record_event
 
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_HOST = "https://api.openai.com/v1"
@@ -168,6 +170,7 @@ def create_action_plan(
             "image_url": f"data:image/jpeg;base64,{encoded}",
             "detail": "auto",
         })
+    started = time.monotonic()
     try:
         response = client.responses.create(
             model=selected,
@@ -182,10 +185,16 @@ def create_action_plan(
             store=False,
         )
     except Exception as exc:
+        record_event("responses_error", error_type=type(exc).__name__,
+                     elapsed_seconds=time.monotonic() - started)
         raise PlannerConnectionError(_friendly_api_error(exc, model=selected)) from exc
     finally:
         if owns_client:
             client.close()
+    record_event("responses_result", model=selected, response_id=_value(response, "id"),
+                 status=_value(response, "status"), output=as_json(_value(response, "output")),
+                 output_text=_value(response, "output_text"), usage=as_json(_value(response, "usage")),
+                 elapsed_seconds=time.monotonic() - started)
     if _value(response, "status") != "completed":
         raise PlannerResponseError("OpenAI 응답이 완료되지 않았습니다. 다시 시도해 주세요.")
     for output in _value(response, "output", []) or []:

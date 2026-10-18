@@ -11,3 +11,7 @@
 ## 직접 마이크 입력 전환 직전 백업
 
 `before_direct_mic_20261018_110826/`는 OpenAI API를 사용하면서 SepFormer로 두 음성을 분리하던 버전입니다. `module`, `tests`, `main.py`, README, 순서도와 의존성 목록을 보관했습니다. `manifest.json`으로 SHA-256을 확인할 수 있습니다. 앞서 만든 원본 백업은 그대로 유지합니다.
+
+## Decisions 분류 및 로그 적용 직전 백업
+
+`before_decisions_20261018_113345/`는 마이크를 직접 전사하고 모든 명령을 Responses로 보내던 버전입니다. 소스·테스트·문서·의존성 목록·`.gitignore`와 SHA-256 manifest를 보관했습니다. 현재 SDK는 Decisions 지원을 위해 3.x로 업데이트했습니다. 복원 시 백업의 SDK 2.x 제약과 현재 환경의 차이를 고려하세요.

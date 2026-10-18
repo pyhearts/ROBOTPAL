@@ -9,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import httpx
+import httpx2 as httpx
 import numpy as np
 from openai import OpenAI
 
@@ -17,6 +17,7 @@ import main
 from module import action_planner as planner
 from module import speech
 from module import vision_assistant as vision
+from module.decision_router import CommandDecision
 
 
 PLAN = {"status": "plan", "summary": "정지", "steps": ["정지한다."], "error": ""}
@@ -142,7 +143,8 @@ class VoiceTests(unittest.TestCase):
             received.append((text, kwargs["image"]))
             return planner.ActionPlan(**PLAN)
 
-        assistant = vision.VoiceVisionAssistant(camera, planner=plan)
+        assistant = vision.VoiceVisionAssistant(camera, client=Mock(), planner=plan,
+            classifier=lambda *args, **kwargs: CommandDecision("concrete_command", 1.0))
         with contextlib.redirect_stdout(io.StringIO()):
             assistant.start()
             try:
@@ -157,7 +159,8 @@ class VoiceTests(unittest.TestCase):
     def test_empty_and_unavailable_camera_do_not_reach_planner(self):
         camera, plan = Mock(), Mock()
         camera.snapshot.side_effect = RuntimeError("no frame")
-        assistant = vision.VoiceVisionAssistant(camera, planner=plan)
+        assistant = vision.VoiceVisionAssistant(camera, client=Mock(), planner=plan,
+            classifier=lambda *args, **kwargs: CommandDecision("concrete_command", 1.0))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             assistant.start()
             assistant.on_transcription("기타", "  ")
@@ -170,7 +173,8 @@ class VoiceTests(unittest.TestCase):
         camera = Mock()
         camera.snapshot.return_value = vision.CameraSnapshot(b"jpeg", 0)
         plan = Mock(side_effect=[RuntimeError("API failure"), planner.ActionPlan(**PLAN)])
-        assistant = vision.VoiceVisionAssistant(camera, planner=plan)
+        assistant = vision.VoiceVisionAssistant(camera, client=Mock(), planner=plan,
+            classifier=lambda *args, **kwargs: CommandDecision("concrete_command", 1.0))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             assistant.start()
             assistant.on_transcription("기타", "첫째")
@@ -215,9 +219,9 @@ class VoiceTests(unittest.TestCase):
     def test_enrollment_cli_disabled_and_default_is_transcription(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                main.main(["--enroll"])
+                main._run_main(["--enroll"])
         with patch.object(main, "run_live_transcription") as run:
-            self.assertEqual(main.main([]), 0)
+            self.assertEqual(main._run_main([]), 0)
         run.assert_called_once_with()
 
     def test_assistant_start_and_cleanup_use_no_profile(self):

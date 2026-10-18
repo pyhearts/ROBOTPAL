@@ -79,7 +79,7 @@ def classify_command(text: str, *, client: Any) -> CommandDecision:
         raise PlannerConnectionError(_friendly_api_error(exc, model=DECISION_MODEL)) from exc
     answers = _value(response, "answers", [])
     record_event("decisions_response", model=DECISION_MODEL,
-                 answers=[as_json(answer) for answer in answers or []],
+                 answers=as_json(answers),
                  usage=as_json(_value(response, "usage")),
                  elapsed_seconds=time.monotonic() - started)
     if not isinstance(answers, list) or len(answers) != 1:
@@ -91,7 +91,7 @@ def classify_command(text: str, *, client: Any) -> CommandDecision:
         return CommandDecision("uncertain", 0.0)
     category, confidence = _value(answer, "choice"), _value(answer, "confidence")
     if (_value(answer, "type") != "choice"
-            or category not in {choice["value"] for choice in CHOICES}
+            or not isinstance(category, str) or category not in {choice["value"] for choice in CHOICES}
             or isinstance(confidence, bool) or not isinstance(confidence, (float, int))
             or not math.isfinite(confidence) or not 0 <= confidence <= 1):
         raise PlannerResponseError("Decisions 분류 응답의 선택지 또는 확신도가 올바르지 않습니다.")
@@ -103,9 +103,10 @@ def process_command(
     model: str | None = None, require_image: bool = False,
     planner: Callable[..., ActionPlan] = create_action_plan,
     classifier: Callable[..., CommandDecision] = classify_command,
+    command_id: str | None = None,
 ) -> CommandResult:
     """Never fall back to a paid plan request after non-command/failed classification."""
-    with command_context(uuid.uuid4().hex):
+    with command_context(command_id or uuid.uuid4().hex):
         record_event("command_input", text=text, has_image=image is not None)
         print(f"입력: {text.strip()}", flush=True)
         owns_client = client is None
@@ -124,7 +125,7 @@ def process_command(
                          confidence=decision.confidence, threshold=MIN_CONFIDENCE)
             print(f"분류: {decision.category} (확신도 {decision.confidence:.2f})", flush=True)
             category = decision.category
-            if category not in FIXED_MESSAGES and decision.confidence < MIN_CONFIDENCE:
+            if category != "unavailable" and decision.confidence < MIN_CONFIDENCE:
                 category = "uncertain"
             if category in FIXED_MESSAGES:
                 result = CommandResult(decision, message=FIXED_MESSAGES[category])
@@ -138,8 +139,11 @@ def process_command(
             else:
                 result = CommandResult(decision, plan=planner(text.strip(), image=image, client=client, model=model))
             record_event("command_result", category=decision.category,
-                         message=result.message, plan=as_json(result.plan))
+                         route=category, message=result.message, plan=as_json(result.plan))
             return result
+        except Exception as exc:
+            record_event("command_error", error_type=type(exc).__name__, message=str(exc))
+            raise
         finally:
             if owns_client and client is not None:
                 client.close()

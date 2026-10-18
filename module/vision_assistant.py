@@ -6,6 +6,7 @@ import queue
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -13,10 +14,11 @@ from .action_planner import (
     ActionPlan,
     create_action_plan,
     create_api_client,
-    print_action_plan,
     selected_model,
 )
 from .speech import run_live_transcription
+from .decision_router import classify_command, process_command, print_command_result
+from .session_log import record_event
 
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
@@ -154,7 +156,8 @@ class VoiceCommand:
     number: int
     speaker: str
     text: str
-    snapshot: CameraSnapshot
+    snapshot: CameraSnapshot | None
+    command_id: str = ""
 
 
 class VoiceVisionAssistant:
@@ -167,11 +170,13 @@ class VoiceVisionAssistant:
         client: Any = None,
         model: str | None = None,
         planner: Callable[..., ActionPlan] = create_action_plan,
+        classifier: Callable[..., Any] = classify_command,
     ) -> None:
         self._camera = camera
         self._client = client
         self._model = model
         self._planner = planner
+        self._classifier = classifier
         self._commands: queue.Queue[VoiceCommand | object] = queue.Queue()
         self._lock = threading.Lock()
         self._accepting = False
@@ -196,14 +201,18 @@ class VoiceVisionAssistant:
         try:
             snapshot = self._camera.snapshot()
         except Exception as exc:
-            print(f"[{speaker}] 명령 처리 실패: {exc}", file=sys.stderr, flush=True)
-            return
+            snapshot = None
+            record_event("camera_snapshot_error", speaker=speaker, error_type=type(exc).__name__)
         with self._lock:
             if not self._accepting:
                 return
-            command = VoiceCommand(self._next_number, speaker, text.strip(), snapshot)
+            command = VoiceCommand(self._next_number, speaker, text.strip(), snapshot, uuid.uuid4().hex)
             self._next_number += 1
             print(f"[명령 {command.number} / {speaker}] 접수: {command.text}", flush=True)
+            record_event("voice_command_received", number=command.number, speaker=speaker,
+                         command_id=command.command_id,
+                         text=command.text, has_image=snapshot is not None,
+                         captured_at=snapshot.captured_at if snapshot is not None else None)
             self._commands.put(command)
 
     def _plan_commands(self) -> None:
@@ -214,15 +223,15 @@ class VoiceVisionAssistant:
                     return
                 assert isinstance(item, VoiceCommand)
                 try:
-                    print(f"[명령 {item.number} / {item.speaker}] OpenAI API 처리 중...", flush=True)
-                    plan = self._planner(
-                        item.text, image=item.snapshot.jpeg, client=self._client, model=self._model
+                    print(f"[명령 {item.number} / {item.speaker}] Decisions 분류 중...", flush=True)
+                    result = process_command(
+                        item.text, image=item.snapshot.jpeg if item.snapshot is not None else None,
+                        client=self._client, model=self._model, require_image=True,
+                        planner=self._planner, classifier=self._classifier,
+                        command_id=item.command_id,
                     )
-                    if plan.status == "invalid":
-                        print(f"[명령 {item.number}] 오류: {plan.error}", file=sys.stderr, flush=True)
-                    else:
-                        print(f"[명령 {item.number} / {item.speaker}] 결과", flush=True)
-                        print_action_plan(plan)
+                    print(f"[명령 {item.number} / {item.speaker}] 결과", flush=True)
+                    print_command_result(result)
                 except Exception as exc:
                     print(f"[명령 {item.number}] 계획 생성 실패: {exc}", file=sys.stderr, flush=True)
             finally:
@@ -248,10 +257,14 @@ def run_voice_vision_assistant(camera_index: int = 0) -> None:
     camera = LatestFrameCamera(camera_index)
     assistant = VoiceVisionAssistant(camera, client=client, model=model)
     try:
-        camera.start()
+        try:
+            camera.start()
+        except RuntimeError as exc:
+            print(f"카메라 준비 실패: {exc}", file=sys.stderr, flush=True)
+            print("영상 없이 발화를 분류합니다. 영상이 필요한 행동 계획은 생성하지 않습니다.", flush=True)
         assistant.start()
         print(f"음성·영상 AI 준비 완료: {model} / 화자 등록 없이 모든 음성을 처리합니다.", flush=True)
-        print("전사된 명령과 카메라 JPEG 한 장을 OpenAI API로 전송합니다.", flush=True)
+        print("Decisions에는 텍스트만 전송하며 구체적인 행동 명령만 사진과 함께 계획 API로 보냅니다.", flush=True)
         run_live_transcription(on_transcription=assistant.on_transcription, identify_speakers=False)
     finally:
         try:

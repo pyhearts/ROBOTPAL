@@ -15,6 +15,8 @@ from module.action_planner import (
 from module.gesture import RULE_SETS, handle_gesture, run_gesture_recognition
 from module.speech import handle_transcription, run_live_transcription
 from module.vision_assistant import run_voice_vision_assistant
+from module.decision_router import process_command, print_command_result
+from module.session_log import capture_output
 
 __all__ = [
     "handle_transcription",
@@ -25,6 +27,8 @@ __all__ = [
     "create_action_plan",
     "print_action_plan",
     "run_voice_vision_assistant",
+    "process_command",
+    "print_command_result",
 ]
 
 
@@ -46,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run_main(argv: Sequence[str] | None = None) -> int:
     command_line = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     args = parser.parse_args(command_line)
@@ -74,11 +78,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.plan:
             command = args.command if args.command is not None else input("로봇 명령을 입력하세요: ")
-            plan = create_action_plan(command)
-            if plan.status == "invalid":
-                print(f"오류: {plan.error}", file=sys.stderr)
+            result = process_command(command)
+            print_command_result(result)
+            if result.plan is not None and result.plan.status == "invalid":
                 return 1
-            print_action_plan(plan)
+            if result.decision.category == "unavailable":
+                return 1
         else:
             run_live_transcription()
     except (RuntimeError, ValueError) as exc:
@@ -88,6 +93,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\n입력이 취소되었습니다.", file=sys.stderr)
         return 1
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    with capture_output():
+        return _run_main(argv)
 
 
 if __name__ == "__main__":
