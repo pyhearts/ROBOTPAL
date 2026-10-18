@@ -27,6 +27,16 @@ $env:OPENAI_MODEL = "gpt-5.4-mini"
 
 분류기는 공식 OpenAI 엔드포인트의 `/decisions`, 계획기와 대화 답변기는 `/responses`를 사용합니다. 기본 주소는 `https://api.openai.com/v1`입니다. Decisions에는 전사 텍스트만 보내고, 일반 대화는 텍스트만, 장면 질문과 구체적 명령은 텍스트와 `--assist`에서 선택한 JPEG 한 장을 보냅니다. 품질 검사를 통과해 최종 분류로 전달된 발화는 Decisions 사용료가 발생합니다. 임시 인식은 Decisions로 보내지 않습니다. 일반 대화·장면 질문에는 Decisions 이후 Responses 1회가 추가됩니다. 정보 부족·미지원·불확실 입력과 정지에는 추가 Responses 호출이 없습니다. 기본 로컬 전사에서는 마이크 오디오를 API로 보내지 않습니다. `--stt-backend openai`를 명시하면 발화 오디오를 OpenAI 전사 API로 보내며 별도 사용료가 발생합니다. Responses 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
 
+## 로컬 음성 출력 (선택)
+
+TTS는 외부 API 없이 MeloTTS + OpenVoice V2를 사용합니다. 별도 환경 설치, 기준 녹음 준비, 시험 재생은 [TTS_GUIDE.md](TTS_GUIDE.md)를 참고하세요.
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --tts
+```
+
+기준 목소리를 먼저 준비해야 합니다. 재생 중과 종료 후 300ms는 마이크 입력을 전사하지 않습니다. 사용자 끼어들기는 지원하지 않습니다. 기본 전사와 손 모양 모드에는 TTS를 적용하지 않습니다.
+
 ## 실행
 
 ### 음성·영상으로 행동 계획 생성
@@ -70,7 +80,7 @@ with capture_output():
 
 ### 분류 결과별 처리
 
-고정 문구는 `module/decision_router.py`의 `FIXED_MESSAGES`에서 수정할 수 있습니다. 일반 대화·장면 질문은 별도 대화 프롬프트로 Responses를 호출해 `[AI 답변]`으로 출력합니다. 음성 합성은 호출하지 않습니다.
+고정 문구는 `module/decision_router.py`의 `FIXED_MESSAGES`에서 수정할 수 있습니다. 일반 대화·장면 질문은 별도 대화 프롬프트로 Responses를 호출해 `[AI 답변]`으로 출력합니다. 기본 실행에서는 화면에 출력하며, `--tts`를 추가하면 로컬 TTS로 최종 결과를 읽습니다.
 
 | 분류 | 동작 및 출력 |
 |---|---|
@@ -209,5 +219,7 @@ SepFormer 병목은 제거했지만 Whisper 전사나 API 응답이 느리면 �
 API 모델·입력 형식 참고: [모델 문서](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [구조화된 응답](https://developers.openai.com/api/docs/guides/structured-outputs), [이미지 입력](https://developers.openai.com/api/docs/guides/images-vision).
 
 Decisions API 참고: [공식 안내](https://developers.openai.com/api/docs/guides/decisions), [Python API 명세](https://developers.openai.com/api/reference/python/resources/decisions/methods/create).
+
+로컬 TTS 적용 직전 소스·문서는 `backups/before_local_tts_20261018_142654/`에 보관했습니다.
 
 일반 대화 답변 추가 직전 소스·테스트·문서는 `backups/before_conversation_20261018_141740/`에 SHA-256 manifest와 함께 보관했습니다.

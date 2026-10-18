@@ -426,6 +426,13 @@ class MonoUtteranceDetector:
         self._preview_id: str | None = None
         self._preview_at = -math.inf
 
+    def reset(self) -> None:
+        """Discard partial speech/pre-roll after playback without finalizing it."""
+        if self.probability is not None:
+            self.probability.reset()
+        self.__init__(self.sample_rate, probability=self.probability,
+                      options=self.options, status_updates=self.status_updates)
+
     def process(self, mono: np.ndarray, start_time: float) -> list[TranscriptionTask]:
         mono = np.asarray(mono, dtype=np.float32)
         if mono.ndim != 1:
@@ -703,7 +710,7 @@ def enroll_speakers() -> None:
     print(f"두 명의 화자 등록을 마쳤습니다: {PROFILE_PATH}")
 
 
-def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier | None, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None]) -> None:
+def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier | None, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None], playback_gate=None) -> None:
     partial_text: dict[str, list[str]] = {}
     rejected: set[str] = set()
     last_preview: tuple[str, str] | None = None
@@ -712,12 +719,24 @@ def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifi
         try:
             if task is _STOP:
                 return
+            if playback_gate is not None and not playback_gate.accepts(
+                task.end_time - len(task.audio) / SAMPLE_RATE, task.end_time,
+            ):
+                if isinstance(task, TranscriptionTask):
+                    partial_text.pop(task.utterance_id, None)
+                    rejected.add(task.utterance_id)
+                    if task.final:
+                        rejected.discard(task.utterance_id)
+                record_event("stt_playback_discarded", reason="recorded_during_playback")
+                continue
             if isinstance(task, PreviewTask):
                 if not isinstance(whisper, SpeechTranscriber) or not tasks.preview_is_current(task):
                     continue
                 try:
                     result = whisper.transcribe_audio(task.audio, preview=True)
-                    if result.accepted and tasks.preview_is_current(task):
+                    preview_safe = playback_gate is None or playback_gate.accepts(
+                        task.end_time - len(task.audio) / SAMPLE_RATE, task.end_time)
+                    if result.accepted and tasks.preview_is_current(task) and preview_safe:
                         key = (task.utterance_id, result.text)
                         if key != last_preview:
                             print(f"[임시 인식] {result.text}", flush=True)
@@ -754,6 +773,11 @@ def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifi
                     rejected.discard(task.utterance_id)
                     complete = ""
                     print(RETRY_MESSAGE, flush=True)
+                if playback_gate is not None and not playback_gate.accepts(
+                    task.end_time - len(task.audio) / SAMPLE_RATE, task.end_time,
+                ):
+                    complete = ""
+                    record_event("stt_playback_discarded", reason="playback_started_during_transcription")
                 record_event("stt_utterance", utterance_id=task.utterance_id, text=complete,
                              accepted=bool(complete),
                              end_to_transcript_seconds=max(0, time.monotonic() - (
@@ -864,12 +888,15 @@ def run_live_transcription(
     offline: bool = False,
     identify_speakers: bool = False,
     options: SpeechOptions | None = None,
+    playback_gate=None,
 ) -> None:
     """Pass mono mic audio straight to VAD and Whisper without SepFormer.
 
     Explicit legacy identification remains available for library callers only.
     """
     if identify_speakers:
+        if playback_gate is not None:
+            raise ValueError("TTS 입력 제어는 직접 마이크 모드에서만 사용할 수 있습니다.")
         if options is not None:
             raise ValueError("새 음성 설정은 직접 마이크 입력 모드에서만 사용할 수 있습니다.")
         run_separated_transcription(on_transcription, offline=offline, identify_speakers=True)
@@ -886,18 +913,35 @@ def run_live_transcription(
     transcript_tasks = LiveTranscriptionQueue(_STOP) if preview_enabled else queue.Queue()
     transcript_thread = threading.Thread(
         target=_transcription_worker,
-        args=(whisper, None, transcript_tasks, on_transcription),
+        args=(whisper, None, transcript_tasks, on_transcription, playback_gate),
         name="speech-transcriber", daemon=True,
     )
 
     def capture_audio(indata, frames, time_info, status) -> None:
         del frames, time_info
         received_at = time.monotonic()
+        start_time = received_at - len(indata) / SAMPLE_RATE
+        epoch = playback_gate.epoch if playback_gate is not None else None
+        if playback_gate is not None and not playback_gate.accepts(start_time, received_at):
+            return
         audio = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
-        captured.put((audio, received_at - len(audio) / SAMPLE_RATE, str(status) if status else ""))
+        item = (audio, start_time, str(status) if status else "")
+        captured.put(item if playback_gate is None else (*item, epoch))
 
+    detector_epoch = playback_gate.epoch if playback_gate is not None else None
     def process_block(item: tuple[np.ndarray, float, str]) -> None:
-        audio, start_time, status = item
+        nonlocal detector_epoch
+        audio, start_time, status = item[:3]
+        if playback_gate is not None:
+            epoch = playback_gate.epoch
+            if detector_epoch != epoch:
+                detector.reset()
+                record_event("microphone_playback_reset", epoch=epoch)
+                if preview_enabled:
+                    transcript_tasks.activate(None)
+                detector_epoch = epoch
+            if item[3] != epoch or not playback_gate.accepts(start_time, start_time + len(audio) / SAMPLE_RATE):
+                return
         if status:
             print(f"마이크 상태: {status}", file=sys.stderr)
             record_event("microphone_status", status=status)
@@ -946,8 +990,11 @@ def run_live_transcription(
                     process_block(item)
                 finally:
                     captured.task_done()
-            for task in detector.flush():
-                transcript_tasks.put(task)
+            if playback_gate is not None and detector_epoch != playback_gate.epoch:
+                detector.reset()
+            else:
+                for task in detector.flush():
+                    transcript_tasks.put(task)
         finally:
             try:
                 transcript_tasks.put(_STOP)

@@ -1,0 +1,11 @@
+.venv/
+models/
+data/speaker_profiles.json
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+logs/
+reports/
+evaluation_audio/

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import traceback
@@ -140,6 +141,23 @@ def save_command_image(jpeg: bytes, *, command_id: str, captured_at: float) -> s
     if _active is None:
         return None
     return _active.save_image(jpeg, command_id=command_id, captured_at=captured_at)
+
+
+def save_command_audio(source: Path, *, command_id: str) -> str | None:
+    """Copy a generated/cached WAV into this run, preserving command linkage."""
+    session = _active
+    if session is None:
+        return None
+    with session._lock:
+        folder = session.events_path.parent / (session.events_path.stem + "_audio")
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"{uuid.uuid4().hex}.wav"
+        with target.open("xb") as output, source.open("rb") as input_audio:
+            shutil.copyfileobj(input_audio, output)
+        relative = target.relative_to(session.events_path.parent).as_posix()
+        session.event("command_audio_saved", command_id=command_id, audio_path=relative,
+                      sha256=hashlib.sha256(target.read_bytes()).hexdigest())
+        return relative
 
 
 @contextlib.contextmanager

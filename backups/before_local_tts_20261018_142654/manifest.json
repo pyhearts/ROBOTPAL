@@ -1,0 +1,10 @@
+{
+  "main.py": "77ebdf195846eda5e14e8df5bf59dcf58827674d1571a88880c8df5619b0d402",
+  "module/speech.py": "39d589fba92b4439453cd0bfeed11ab94a94fdc3e90769c75af90483d8a9616f",
+  "module/vision_assistant.py": "844ef7defec53776bf65a59109a5c0b68ff403bfefeb5db7183193bd3b2c826e",
+  "module/session_log.py": "7ea9135568920980dccb323a311326542316468e74694228886bf4f5916effcc",
+  ".gitignore": "d4c6fd60eeefe96fb5a5f452acefc15ae36fdacda99409200cc878a6c5f449cb",
+  "README.md": "945aea187fe0c6159b6be0681bbc9d4160b4b5fe655451c182e804c91ad1d43b",
+  "FLOWCHART.md": "a307e1714c61608fb937bc32172d13a846ae430d1b1b99f4052c65448c1f4560",
+  "module/speech_quality.py": "2b5ecd99dd3adc845875a3670a5165f92c4f54c2a55c6d1b0a7cf4589d00334e"
+}

@@ -172,12 +172,14 @@ class VoiceVisionAssistant:
         model: str | None = None,
         planner: Callable[..., ActionPlan] = create_action_plan,
         classifier: Callable[..., Any] = classify_command,
+        tts: Any = None,
     ) -> None:
         self._camera = camera
         self._client = client
         self._model = model
         self._planner = planner
         self._classifier = classifier
+        self._tts = tts
         self._commands: queue.Queue[VoiceCommand | object] = queue.Queue()
         self._lock = threading.Lock()
         self._accepting = False
@@ -243,6 +245,8 @@ class VoiceVisionAssistant:
                     )
                     print(f"[명령 {item.number} / {item.speaker}] 결과", flush=True)
                     print_command_result(result)
+                    if self._tts is not None:
+                        self._tts.submit_result(result, item.command_id)
                 except Exception as exc:
                     print(f"[명령 {item.number}] 계획 생성 실패: {exc}", file=sys.stderr, flush=True)
             finally:
@@ -261,12 +265,23 @@ class VoiceVisionAssistant:
             self._thread.join()
 
 
-def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions | None = None, offline: bool = False) -> None:
+def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions | None = None, offline: bool = False, tts_options=None) -> None:
     """Accept every voice and send text + JPEG to OpenAI until Ctrl+C."""
     client = create_api_client()
     model = selected_model()
     camera = LatestFrameCamera(camera_index)
-    assistant = VoiceVisionAssistant(camera, client=client, model=model)
+    tts = None
+    if tts_options is not None:
+        from .local_tts import LocalTTS
+        tts = LocalTTS(tts_options)
+        try:
+            tts.start()
+        except Exception as exc:
+            tts.close()
+            tts = None
+            record_event("tts_unavailable", error_type=type(exc).__name__, error=str(exc))
+            print(f"로컬 TTS 준비 실패: {exc} 화면 출력으로 계속합니다.", flush=True)
+    assistant = VoiceVisionAssistant(camera, client=client, model=model, **({"tts": tts} if tts is not None else {}))
     try:
         try:
             camera.start()
@@ -281,8 +296,12 @@ def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions 
             speech_kwargs["options"] = options
         if offline:
             speech_kwargs["offline"] = True
+        if tts is not None:
+            speech_kwargs["playback_gate"] = tts.gate
         run_live_transcription(on_transcription=assistant.on_transcription, identify_speakers=False, **speech_kwargs)
     finally:
+        if tts is not None:
+            tts.close()
         try:
             camera.close()
         finally:

@@ -89,6 +89,11 @@ class SileroProbability:
         self.c = np.zeros_like(self.h)
         self.context = np.zeros(64, dtype=np.float32)
 
+    def reset(self) -> None:
+        self.h.fill(0)
+        self.c.fill(0)
+        self.context.fill(0)
+
     def __call__(self, frame: np.ndarray) -> float:
         frame = np.asarray(frame, dtype=np.float32)
         if frame.shape != (self.frame_samples,):

@@ -9,3 +9,9 @@ __pycache__/
 logs/
 reports/
 evaluation_audio/
+.tts-venv/
+.tts-tools/
+.tts-python/
+.tts-sources/
+data/tts/
+/*.m4a

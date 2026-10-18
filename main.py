@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import uuid
 from pathlib import Path
 from typing import Sequence
 
@@ -45,6 +46,16 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--diagnose-mic", action="store_true", help="녹음 저장 없이 마이크 음량을 진단합니다.")
     mode.add_argument("--record-sample", type=Path, help="비교 평가용 WAV를 명시적으로 녹음·저장합니다.")
     mode.add_argument("--compare-stt", type=Path, help="정답 JSONL 목록으로 전사 설정을 비교합니다.")
+    mode.add_argument("--list-speakers", action="store_true", help="스피커 장치 번호를 표시합니다.")
+    mode.add_argument("--prepare-tts", action="store_true", help="기준 녹음으로 로컬 목소리와 고정 안내를 준비합니다.")
+    mode.add_argument("--test-tts", metavar="TEXT", help="API 없이 로컬 TTS 문장을 시험 재생합니다.")
+    parser.add_argument("--tts", action="store_true", help="--assist 또는 --plan 결과를 로컬 음성으로 읽습니다.")
+    parser.add_argument("--tts-reference", type=Path, nargs="+", help="--prepare-tts에 사용할 기준 녹음 경로 (여러 개 가능)")
+    parser.add_argument("--tts-voice", type=Path, help="준비된 목소리 JSON 경로")
+    parser.add_argument("--tts-python", type=Path, help="TTS 전용 Python 경로 (기본 .tts-venv)")
+    parser.add_argument("--tts-models", type=Path, help="TTS 모델 폴더 (기본 models/tts)")
+    parser.add_argument("--tts-speed", type=float, default=1.0, help="음성 속도 0.5~2 (기본 1)")
+    parser.add_argument("--output-device", type=int, help="사용할 스피커 번호 (--list-speakers)")
     parser.add_argument("--command", help="--plan에 전달할 명령 (생략하면 입력을 요청합니다)")
     parser.add_argument("--camera", type=int, default=0, help="사용할 카메라 번호 (기본값: 0)")
     parser.add_argument("--preview", action="store_true", help="랜드마크 미리보기 창을 표시합니다.")
@@ -88,6 +99,17 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
         for option in command_line
         if option.startswith("--")
     }
+    tts_mode = args.tts or args.prepare_tts or args.test_tts is not None
+    if args.tts and not (args.assist or args.plan):
+        parser.error("--tts는 --assist 또는 --plan과 함께 사용합니다.")
+    if args.prepare_tts and args.tts_reference is None:
+        parser.error("--prepare-tts에는 --tts-reference가 필요합니다.")
+    if args.tts_reference is not None and not args.prepare_tts:
+        parser.error("--tts-reference는 --prepare-tts에서 사용합니다.")
+    if supplied_flags & {"--tts-voice", "--tts-python", "--tts-models", "--tts-speed", "--output-device"} and not tts_mode:
+        parser.error("TTS 설정은 --tts, --prepare-tts 또는 --test-tts에서 사용합니다.")
+    if args.test_tts is not None and not 1 <= len(args.test_tts.strip()) <= 300:
+        parser.error("--test-tts 문장은 1~300자여야 합니다.")
     if "--camera" in supplied_flags and not (args.gesture or args.assist):
         parser.error("--camera는 --gesture 또는 --assist와 함께 사용해야 합니다.")
     if supplied_flags & {"--preview", "--rule-set"} and not args.gesture:
@@ -100,7 +122,7 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
                  "--vad-threshold", "--speech-pre-roll", "--speech-silence", "--speech-min-duration",
                  "--whisper-vad", "--show-levels", "--stt-offline", "--stt-min-logprob", "--stt-max-no-speech",
                  "--no-live-preview", "--preview-interval", "--preview-window", "--stt-max-tokens"}
-    if supplied_flags & stt_flags and (args.plan or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample):
+    if supplied_flags & stt_flags and (args.plan or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample or args.list_speakers or args.prepare_tts or args.test_tts is not None):
         parser.error("전사 설정은 기본 음성 모드, --assist, --compare-stt에서만 사용합니다.")
     if "--input-device" in supplied_flags and (args.plan or args.gesture or args.list_mics or args.compare_stt):
         parser.error("--input-device는 실시간 음성 모드 또는 마이크 진단·녹음에서 사용합니다.")
@@ -109,6 +131,32 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
     if "--sample-seconds" in supplied_flags and not (args.diagnose_mic or args.record_sample):
         parser.error("--sample-seconds는 마이크 진단·녹음에서만 사용합니다.")
     try:
+        tts_options = None
+        if tts_mode:
+            from module.local_tts import TTSOptions
+            tts_kwargs = {"speed": args.tts_speed, "output_device": args.output_device}
+            for field, value in [("voice", args.tts_voice), ("python", args.tts_python), ("models", args.tts_models)]:
+                if value is not None:
+                    tts_kwargs[field] = value
+            tts_options = TTSOptions(**tts_kwargs)
+        if args.list_speakers:
+            from module.local_tts import list_speakers
+            list_speakers()
+            return 0
+        if args.prepare_tts:
+            from module.local_tts import prepare_voice
+            prepare_voice(tts_options, args.tts_reference)
+            return 0
+        if args.test_tts is not None:
+            from module.local_tts import LocalTTS
+            tts = LocalTTS(tts_options)
+            try:
+                tts.start()
+                tts.submit(args.test_tts, uuid.uuid4().hex)
+                tts.wait()
+            finally:
+                tts.close()
+            return 0
         options = SpeechOptions(input_device=args.input_device, backend=args.stt_backend,
             model=args.stt_model, device=args.stt_device, compute_type=args.stt_compute,
             beam_size=args.stt_beam, vad_threshold=args.vad_threshold, pre_roll=args.speech_pre_roll,
@@ -134,6 +182,8 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
                 models=[item.strip() for item in models.split(",")],
                 beams=[int(item.strip()) for item in beams.split(",")], offline=args.stt_offline)
         elif args.assist:
+            if tts_options is not None:
+                speech_kwargs["tts_options"] = tts_options
             run_voice_vision_assistant(camera_index=args.camera, **speech_kwargs)
         elif args.gesture:
             run_gesture_recognition(
@@ -143,15 +193,27 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.plan:
             command = args.command if args.command is not None else input("로봇 명령을 입력하세요: ")
-            result = process_command(command)
+            result_id = uuid.uuid4().hex if tts_options is not None else None
+            result = process_command(command, **({"command_id": result_id} if result_id is not None else {}))
             print_command_result(result)
+            if tts_options is not None:
+                from module.local_tts import LocalTTS
+                tts = LocalTTS(tts_options)
+                try:
+                    tts.start()
+                    tts.submit_result(result, result_id)
+                    tts.wait()
+                except Exception as exc:
+                    print(f"음성 출력 실패: {exc}", file=sys.stderr)
+                finally:
+                    tts.close()
             if result.plan is not None and result.plan.status == "invalid":
                 return 1
             if result.decision.category == "unavailable":
                 return 1
         else:
             run_live_transcription(**speech_kwargs)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         print(exc, file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):
