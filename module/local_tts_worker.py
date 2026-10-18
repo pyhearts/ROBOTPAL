@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import sys
@@ -21,6 +22,11 @@ def deny_network() -> None:
     socket.socket.connect = blocked
     socket.socket.connect_ex = blocked
     socket.create_connection = blocked
+
+
+def split_phrases(text: str) -> list[str]:
+    """Keep decimal numbers intact while separating complete sentences."""
+    return [part.strip() for part in re.split(r"(?<=[!?。！？])\s*|(?<=\.)\s+", text) if part.strip()]
 
 
 class OpenVoiceBackend:
@@ -93,7 +99,7 @@ class OpenVoiceBackend:
             raise ValueError("TTS 모델 manifest가 없습니다. setup_tts.py를 실행하세요.")
         return hashlib.sha256(manifest.read_bytes()).hexdigest()
 
-    def synthesize(self, text: str, output: Path, voice: Path, speed: float) -> dict:
+    def synthesize(self, text: str, output: Path, voice: Path, speed: float, style: str = "standard") -> dict:
         metadata = json.loads(voice.read_text(encoding="utf-8"))
         if metadata["model_version"] != self.model_version():
             raise ValueError("모델이 바뀌었습니다. 새 목소리 설정을 준비하세요.")
@@ -106,7 +112,27 @@ class OpenVoiceBackend:
         with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
             source = Path(tmp) / "base.wav"
             started = time.monotonic()
-            self.model.tts_to_file(text, self.speaker_id, str(source), speed=speed, quiet=True)
+            if style == "natural":
+                import numpy as np
+                import soundfile as sf
+                # Keep punctuation as a prosody cue and avoid merging a short
+                # greeting into the next sentence (Melo's default min_len=10).
+                phrases = split_phrases(text)
+                audio_parts = []
+                rate = self.model.hps.data.sampling_rate
+                for index, phrase in enumerate(phrases):
+                    audio_parts.append(self.model.tts_to_file(
+                        phrase, self.speaker_id, speed=speed, quiet=True,
+                        sdp_ratio=0.55, noise_scale=0.6, noise_scale_w=0.9,
+                    ))
+                    if index < len(phrases) - 1:
+                        pause = 0.23 if phrase.endswith(("?", "？")) else 0.18
+                        audio_parts.append(np.zeros(round(rate * pause), dtype=np.float32))
+                sf.write(str(source), np.concatenate(audio_parts), rate)
+            elif style == "standard":
+                self.model.tts_to_file(text, self.speaker_id, str(source), speed=speed, quiet=True)
+            else:
+                raise ValueError("지원하지 않는 TTS 말투입니다.")
             base_seconds = time.monotonic() - started
             started = time.monotonic()
             self.converter.convert(str(source), self.source_se, self._target,
@@ -119,20 +145,29 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--engine", choices=("openvoice", "gpt-sovits"), default="openvoice")
+    parser.add_argument("--source", type=Path)
     args = parser.parse_args()
     os.environ["HF_HOME"] = str(args.models / "hf")
     os.environ["NLTK_DATA"] = str(args.models / "nltk")
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["MPLCONFIGDIR"] = str(args.models / "matplotlib")
     deny_network()
     protocol = sys.stdout
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            backend = OpenVoiceBackend(args.models, args.threads)
+            if args.engine == "gpt-sovits":
+                from reference_tts_backend import ReferenceTTSBackend
+                backend = ReferenceTTSBackend(args.models, args.source, args.threads)
+            else:
+                backend = OpenVoiceBackend(args.models, args.threads)
         protocol.write(json.dumps({"ready": True}) + "\n")
         protocol.flush()
     except Exception as exc:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         protocol.write(json.dumps({"ready": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False) + "\n")
         protocol.flush()
         return 1
@@ -144,7 +179,8 @@ def main() -> int:
                     result = backend.prepare(Path(request["reference"]), Path(request["voice"]))
                 else:
                     output = Path(request["output"])
-                    timings = backend.synthesize(request["text"], output, Path(request["voice"]), request["speed"])
+                    timings = backend.synthesize(request["text"], output, Path(request["voice"]), request["speed"],
+                                                 request.get("style", "standard"))
                     result = {"output": str(output), **timings}
             response = {"ok": True, "result": result}
         except Exception as exc:

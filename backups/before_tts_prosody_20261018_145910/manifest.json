@@ -1,0 +1,7 @@
+{
+  "main.py": "baa720e56ea5b0cf99fab663d8f16d65ed47a924028677e21792b37a7142d7cf",
+  "module/local_tts.py": "8f70bf3dce175250e3b93386a24ad6e1b7d8d3b6c3f8b9e37e7c8047e23be4af",
+  "module/local_tts_worker.py": "c3a3e9d08ced7b3b5c155f1def849b15bd2fbd3d5254888d134ea2176d400a0c",
+  "tests/test_local_tts.py": "768e24cfab5eea29efdbf6bfb97630f7e2ca58fb012760638bc949bc7a519515",
+  "TTS_GUIDE.md": "6865547352832f8a274bd762c706e732e4e0ab8f07a79f851af08c78a547ca3a"
+}

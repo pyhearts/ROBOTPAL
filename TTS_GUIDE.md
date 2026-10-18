@@ -1,104 +1,103 @@
 # 로컬 TTS 사용
 
-MeloTTS의 한국어 음성을 OpenVoice V2로 변환해 기준 녹음의 목소리 특성을 적용합니다. 기준 음성과 생성 문장은 TTS 외부 서비스에 전송하지 않습니다. 기존 Decisions·대화·행동 계획 생성은 계속 OpenAI API를 사용합니다.
+기본 엔진은 **GPT-SoVITS v2ProPlus**입니다. 기준 녹음과 일치하는 대본을 함께 참조해 목소리·억양·리듬을 생성합니다. 녹음을 이어 붙이거나 피치를 인위적으로 흔들지 않습니다. 기존 MeloTTS + OpenVoice V2는 `--tts-engine openvoice`로 사용할 수 있습니다.
 
-## 1. 최초 설치
+TTS의 녹음·대본·합성 문장은 외부 서비스에 전송하지 않습니다. 작업자는 네트워크를 차단하고 API 키를 전달받지 않습니다. 기존 Decisions·대화·행동 계획 생성은 계속 OpenAI API를 사용합니다.
 
-프로젝트 폴더에서 실행합니다. 최초 설치에는 인터넷과 수 GB의 여유 공간이 필요합니다. 별도 Python 3.10과 CPU PyTorch를 `.tts-python/`, `.tts-venv/`에 설치하며 기존 `.venv`를 변경하지 않습니다.
+## 설치
+
+최초 설치에만 인터넷과 수 GB의 공간이 필요합니다. 앱의 `.venv`와 분리한 Python 3.10 CPU 환경 `.gsv-venv`를 사용합니다.
 
 ```powershell
-.\.venv\Scripts\python.exe .\setup_tts.py
+.\.venv\Scripts\python.exe .\setup_reference_tts.py
 ```
 
-공식 OpenVoice/MeloTTS의 고정된 소스 버전을 사용합니다. 한국어와 무관한 모델 다운로드를 피하도록 MeloTTS의 언어 로딩을 한국어 전용으로 연결합니다. 구형 g2pkk의 Windows 런타임 자동 설치를 사용하지 않고 미리 설치한 python-mecab-ko를 연결합니다. 모델·발음 자료·워터마크 모델을 미리 준비하고 오프라인 모델 로딩까지 확인합니다. `models/tts/manifest.json`에 소스 버전과 모델 해시, `installed-requirements.txt`에 실제 설치 패키지를 기록합니다.
+고정된 공식 소스 버전과 모델을 받고 오프라인 로딩까지 확인합니다. `models/reference_tts/manifest.json`에 모델 해시·소스 및 모델 리비전을, `installed-requirements.txt`에 실제 패키지를 기록합니다. 한국어 전용으로 사용하지 않는 중국어 BERT·자동 언어 감지 모델은 로딩하지 않습니다. 모델 누락 때 실행 중 다운로드하거나 클라우드로 전환하지 않습니다.
 
-라이브 합성 작업자는 네트워크 연결을 차단하며 `OPENAI_API_KEY`를 전달받지 않습니다. 모델이 빠져 있어도 실행 중 다운로드하거나 클라우드 TTS로 전환하지 않습니다.
+## 기준 녹음 준비
 
-## 2. 기준 녹음 만들기
-
-본인 또는 사용 동의를 받은 화자의 목소리로 조용한 곳에서 자연스럽게 여러 문장을 읽으세요. 배경 음악·다른 화자·울림을 피하고 마이크 거리를 일정하게 유지하세요. 기준 녹음은 5~60초의 WAV/FLAC 및 M4A 같은 녹음 형식을 지원하며, 우선 20초 녹음을 권장합니다. 기존 녹음 기능의 한 번 녹음 길이는 최대 30초입니다.
+본인 또는 사용 동의를 받은 같은 화자의 녹음을 사용하세요. 조용한 곳에서 일정한 마이크 거리로 자연스럽게 읽은 문장이 좋습니다. 평서문·질문·안내 문장을 다양하게 녹음하면 참조 선택 폭이 넓어집니다. 파일 수보다 정확한 발음·대본과 잡음 없는 발화가 중요합니다.
 
 ```powershell
-# 장치 번호 확인
 .\.venv\Scripts\python.exe .\main.py --list-mics
-
-# 명령을 실행한 뒤 20초 동안 읽기 (기존 파일을 덮어쓰지 않음)
 .\.venv\Scripts\python.exe .\main.py --record-sample .\data\tts\reference.wav --input-device 1 --sample-seconds 20
+.\.venv\Scripts\python.exe .\main.py --prepare-tts --tts-reference ".\남성1.m4a" ".\남성2.m4a" --tts-voice .\data\tts\new_voice.json
 ```
 
-예시 문장:
+기존 로컬 Whisper와 VAD로 각 녹음에서 깨끗한 3.2~9.5초 구간을 찾고 최대 2개씩 추립니다. 인식 확신도가 낮거나 무음·클리핑이 심한 구간은 제외합니다. 32kHz 모노 WAV 사본의 원래 속도·억양을 유지하고 양끝에 5ms 페이드만 적용합니다. 원본은 수정하지 않고 SHA-256을 기록합니다.
 
-> 안녕하세요. 저는 로봇팔의 음성 안내를 맡고 있습니다. 주변 상황과 요청하신 내용을 차분하게 설명하겠습니다. 앞으로 삼십 센티미터 이동하는 계획입니다. 왼쪽으로 구십 도 회전하는 계획입니다. 잘 듣지 못했을 때에는 다시 말씀해 주세요. 감사합니다.
+기본 설정은 `data/tts/reference_voice.json`, 발화 WAV와 자동 대본은 별도 `data/tts/references_*/dataset.json`에 저장합니다. 질문에는 질문 참조를 우선 선택하고, 없으면 품질 점수가 높은 구간을 사용합니다. 다른 원본 녹음의 좋은 구간도 보조 목소리 참조로 함께 전달합니다(최대 3개). 추가 학습 없이 참조하는 방식이며 모든 녹음의 리듬을 학습하는 것은 아닙니다.
 
-너무 작거나 찌그러지는 녹음은 다시 만드세요. 원본은 수정하지 않습니다. 전처리에서는 모노 변환·샘플레이트 변환·앞뒤 무음 제거를 수행하며, 별도의 Whisper나 음성 분리 모델을 불러오지 않습니다. 목소리 유사도는 녹음 품질에 따라 달라집니다.
-
-## 3. 목소리와 고정 안내 준비
+대본은 자동 인식 결과이며 검수 완료로 표시하지 않습니다. 틀린 대본은 자연스러움과 발음에 영향을 줄 수 있습니다. 구간을 들어 보고 `dataset.json`의 `text`를 실제 발화에 맞게 수정한 뒤 새 설정으로 저장할 수 있습니다.
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py --prepare-tts --tts-reference .\data\tts\reference.wav
+.\.venv\Scripts\python.exe .\tools\curate_reference_voice.py --finalize .\data\tts\references_실제폴더\dataset.json --voice .\data\tts\reference_voice_reviewed.json
 ```
 
-여러 녹음을 같은 목소리 기준으로 함께 사용할 수 있습니다. 여러 파일이면 각 파일의 가운데 구간을 같은 비율로 선택해 총 최대 50초로 합칩니다. 두 파일이면 최대 25초씩 사용합니다. 형식 변환·선택 구간·원본 해시는 로그에 남기며 원본은 수정하지 않습니다.
+실행에도 `--tts-voice .\data\tts\reference_voice_reviewed.json`을 지정하세요. 기존 설정은 덮어쓰지 않습니다. 새 녹음은 `--prepare-tts --tts-reference 경로 --tts-voice 새경로`로 준비합니다. 대본·설정·WAV 해시를 확인해 변경 후 예전 캐시 사용을 막습니다.
 
-```powershell
-.\.venv\Scripts\python.exe .\main.py --prepare-tts --tts-reference ".\녹음 (2).m4a" ".\녹음 (4).m4a"
-```
+## 시험 재생과 실행
 
-`data/tts/voice.json`에 목소리 설정을, 별도 하위 폴더에 전처리 WAV와 목소리 특성 파일을 만듭니다. 고정 오류·재질문·정지 계획 안내도 미리 합성해 캐시에 저장합니다. 재생은 하지 않습니다. CPU에서는 준비에 시간이 걸릴 수 있으며, 각 합성은 60초 제한입니다.
-
-기존 목소리 설정은 덮어쓰지 않습니다. 새 녹음을 사용하려면 `--tts-voice .\data\tts\voice2.json`처럼 새 설정 파일을 지정하세요. 이후 시험·실행에서도 같은 경로를 지정합니다. 고정 안내 준비가 일부 실패했더라도 목소리 설정이 생성되었다면 `--test-tts`로 시험할 수 있으며, 누락된 안내는 실제 사용 때 생성합니다.
-
-## 4. 시험 재생과 실제 실행
-
-시험은 OpenAI API를 호출하지 않습니다. 지정한 스피커로 소리가 나므로 준비된 상태에서 실행하세요.
+이 PC에는 두 녹음으로 만든 기본 참조 설정이 준비되어 있습니다. 아래 시험은 API를 호출하지 않습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe .\main.py --list-speakers
 .\.venv\Scripts\python.exe .\main.py --test-tts "안녕하세요. 잘 들리시나요?"
-
 .\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --tts
 
-# 스피커 번호와 말하기 속도 지정
+# 출력 장치와 속도 조정
 .\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --tts --output-device 3 --tts-speed 1.0
-
-# 텍스트 결과 읽기
-.\.venv\Scripts\python.exe .\main.py --plan --command "안녕" --tts
 ```
 
-`--tts`를 생략하면 기존처럼 화면에만 출력합니다. 필요할 때 `--tts-python`, `--tts-models`, `--tts-voice`로 기본 경로를 변경할 수 있습니다. 스피커를 지정하지 않으면 시스템 기본 출력 장치를 사용합니다.
+`--tts`를 생략하면 화면에만 출력합니다. 기본 음성 전사·손 모양 모드는 기존 동작을 따릅니다. `--tts-python`, `--tts-models`, `--tts-voice`로 경로를 지정합니다. 한국어 전용이며 다른 언어 품질은 검증하지 않았습니다. GPT-SoVITS의 `--tts-style`은 합성 설정을 바꾸지 않습니다. 참조 발화로 리듬을 생성합니다.
 
-## 출력 규칙과 마이크 제어
-
-- 일반 대화·장면 질문: 최종 AI 답변만 읽습니다. 예외적으로 300자를 넘으면 완결된 문장까지만 읽고 전체 내용은 화면·로그에 남깁니다. 첫 문장 자체가 너무 길면 화면 확인 안내를 읽습니다.
-- 행동 계획: `행동 계획입니다.`와 요약만 읽으며, 모든 단계는 화면에 표시합니다.
-- 정지: `정지 계획을 접수했습니다.`라고 읽습니다. 실제 하드웨어 정지 완료를 주장하지 않습니다.
-- 불명확·미지원·API 오류: 고정 안내를 읽습니다. 혼잣말·무의미한 입력, 임시 인식·진행 로그는 읽지 않습니다.
-- 재생 중과 종료 후 300ms 동안 마이크 입력을 전사로 보내지 않습니다. 감지 버퍼를 초기화하고 늦게 도착한 녹음·전사 작업도 재생 구간과 대조해 제외합니다. 재생 중 끼어들기는 지원하지 않습니다.
-- 합성 중에는 계속 듣습니다. 합성 작업자는 CPU 스레드 2개를 사용하지만 자원을 공유하므로 실제 전사 지연은 측정이 필요합니다.
-- 대기 중 음성은 최대 4개입니다. 가득 차면 새 음성만 생략하며 화면과 결과 로그는 유지합니다.
-- 실패한 합성은 자동 재시도하지 않습니다. 다음 발화의 출력은 계속 시도합니다. 시작 때 목소리·모델·출력 장치를 준비하지 못하면 `--assist`는 화면 출력으로 계속합니다.
-- Ctrl+C 시 재생과 대기 중 TTS를 취소합니다. 이미 접수한 AI 요청은 기존 종료 정책대로 마무리하되 추가 음성은 재생하지 않습니다.
-
-## 저장과 확인
-
-`data/tts/cache/`에는 문장·모델 버전·목소리 버전·속도별 WAV를 저장합니다. 같은 문장은 재합성하지 않습니다. 자동 삭제하지 않으며, 기준 녹음·캐시·전용 실행 환경은 Git에서 제외됩니다.
-
-실행별 `logs/<실행 이름>_audio/`에 생성·재사용 음성을 복사하고 `command_id`로 대화·계획·이미지와 연결합니다. JSONL에 `tts_queued`, `tts_audio_ready`, `tts_playback_start/end`, `tts_error`, `tts_skipped`, `command_audio_saved`를 기록합니다. `tts_audio_ready`에는 읽은 문장·음성 경로·캐시 여부·합성 시간·음성 길이·목소리/모델 버전·속도·대기 시간이 들어갑니다. 전체 AI 답변은 기존 `command_result`에 남습니다.
-
-모델 설치만으로 사용자 목소리 준비가 완료되지는 않습니다. 실제 기준 녹음으로 한국어 숫자·방향 발음, 목소리 유사도, 전사 동시 실행 지연을 확인하세요. 캐시 재생 0.5초, 새 짧은 문장의 합성·변환 3초는 목표이며 보장되는 성능이 아닙니다.
-
-출처: [OpenVoice](https://github.com/myshell-ai/OpenVoice), [MeloTTS](https://github.com/myshell-ai/MeloTTS), [공식 OpenVoice V2 모델](https://huggingface.co/myshell-ai/OpenVoiceV2).
-
-## 이 PC에서의 실제 준비·검증 결과 (2026-10-18)
-
-사용자가 선택한 `녹음 (2).m4a`, `녹음 (4).m4a`의 가운데 25초씩을 사용해 기본 `data/tts/voice.json`을 준비했습니다. 원본 두 파일의 해시는 준비 전후 동일하며, 고정 안내 8개를 캐시했습니다. 모델 설치와 사용자 목소리의 실제 합성 모두 네트워크 차단 작업자에서 확인했습니다.
-
-모델을 준비한 상태에서 짧은 문장 3개를 시험한 결과 합성·변환에 약 25~27초가 걸렸습니다. 새 문장 3초 목표는 충족하지 못했습니다. 따라서 TTS는 여전히 `--tts`로 직접 켜는 선택 기능이며 기본 실행에서는 활성화하지 않습니다. 캐시 조회는 빠르지만 실제 스피커의 재생 시작 시간과 물리적인 에코는 시험하지 않았습니다. 목소리 유사도는 생성된 샘플을 들어 보고 판단해야 합니다.
-
-같은 3초 녹음으로 측정한 Whisper 처리 시간 평균은 단독 실행 약 2.86초, 합성 동시 실행 약 3.25초였습니다. 소수 표본의 참고 측정이며 실시간 마이크 응답 지연이나 전체 발화의 정확도를 보장하지 않습니다.
-
-측정 결과와 WAV는 `reports/tts_20261018_145309/`에 있습니다. 다시 측정하려면 아래 명령을 사용하세요. 스피커로 재생하거나 API를 호출하지 않습니다.
+기존 방식 비교:
 
 ```powershell
+.\.venv\Scripts\python.exe .\main.py --test-tts "안녕하세요. 잘 들리시나요?" --tts-engine openvoice --tts-style natural
+```
+
+기존 `data/tts/voice.json`, 모델·캐시·환경은 보존했습니다. 새 PC에서 기존 엔진을 설치하려면 `setup_tts.py`를 사용하세요.
+
+## 여성 목소리 선택
+
+`여성1.m4a`만 사용한 별도 목소리는 `data/tts/female_voice.json`에 준비했습니다. 남성 목소리와 섞지 않고 원본 녹음과 기존 기본 설정은 보존합니다. 여성 목소리로 실행할 때만 아래 설정을 추가하세요.
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py --test-tts "안녕하세요. 오늘은 무엇을 도와드릴까요?" --tts-voice .\data\tts\female_voice.json
+.\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --tts --tts-voice .\data\tts\female_voice.json
+```
+
+`--tts-voice`를 생략하면 기존 남성 기본 목소리를 사용합니다. 여성 목소리의 참조 발화와 자동 대본은 `data/tts/references_76a361abd1/dataset.json`에서 확인할 수 있습니다. 대본은 자동 전사이므로 청취 검수가 필요합니다.
+
+## 출력과 마이크
+
+- 일반 대화·장면 질문은 최종 답변만 읽으며, 300자를 넘으면 완결 문장까지만 읽습니다. 전체 답변은 화면과 로그에 남깁니다.
+- 행동 계획은 계획임을 밝히고 요약을 읽습니다. 실제 동작 완료를 주장하지 않습니다.
+- 오류·재질문·정지는 고정 안내를 읽습니다. 무의미한 입력·임시 전사·진행 로그는 읽지 않습니다.
+- 재생 중과 종료 후 300ms는 마이크 입력을 제외합니다. 버퍼와 늦게 처리된 전사도 재생 구간과 대조합니다. 재생 중 끼어들기는 지원하지 않습니다.
+- 합성 중에는 듣기를 유지합니다. CPU 스레드 2개를 사용하지만 전사와 자원을 공유합니다.
+- 대기 음성은 최대 4개입니다. 가득 차면 새 음성만 생략하고 화면·로그는 유지합니다.
+- 모델 시작 제한은 120초, GPT-SoVITS 문장 합성 제한은 240초입니다(OpenVoice 60초). 실패 시 자동 재시도하지 않고 다음 출력은 계속 시도합니다. 초기화 실패 시 음성 비서의 화면 출력은 계속합니다.
+- Ctrl+C는 재생과 대기 TTS를 취소합니다.
+
+## 저장·검증
+
+`data/tts/cache/`에 문장·모델·목소리·속도·엔진 버전별 WAV를 저장합니다. 동일 문장은 재합성하지 않습니다. 기준 녹음·모델·실행 환경·캐시는 Git에서 제외합니다.
+
+실행별 `logs/<실행 이름>_audio/`에 생성·재사용 WAV를 복사하고 `command_id`로 AI 답변·계획·이미지와 연결합니다. `tts_synthesis_profile`에 엔진·주 참조 ID·보조 참조 ID·합성 시간을 기록합니다. 기존 대기·재생·실패·건너뜀 로그도 유지합니다.
+
+2026-10-18에 두 원본에서 4개 구간을 준비했습니다. 준비 당시 이름은 `녹음 (2).m4a`, `녹음 (4).m4a`이며 현재 `남성1.m4a`, `남성2.m4a`와 각각 해시가 같습니다. 자동 대본과 구간 정보는 `data/tts/reference_dataset_20261018_155451/dataset.json`에 있습니다. 새로 추가된 다른 화자의 녹음은 이 목소리에 섞지 않았습니다.
+
+두 녹음을 함께 참조하는 최종 설정에서 시험 문장 3개의 합성 시간은 약 19~28초였습니다. `reports/tts_20261018_160140/reference_voice.wav`와 `previous_voice.wav`에 같은 문장의 새·기존 음성이 있습니다. CPU에서 실시간 응답을 보장하지 않으며 자연스러움·목소리 유사도는 실제 청취로 비교해야 합니다. 실제 스피커와 물리적 에코는 이 검증에 포함하지 않았습니다. 고정 안내 8개는 준비 단계에서 캐시하며, 일반 답변은 처음에만 합성합니다.
+
+```powershell
+# 소리를 재생하거나 API를 호출하지 않고 측정
+.\.venv\Scripts\python.exe .\tools\benchmark_local_tts.py
+# 전사 동시 실행 비교는 메모리를 더 사용
 .\.venv\Scripts\python.exe .\tools\benchmark_local_tts.py --compare-stt
 ```
+
+변경 전 소스는 `backups/before_reference_tts_20261018_150325/`에 보관했습니다.
+
+출처: [GPT-SoVITS 공식 소스](https://github.com/RVC-Boss/GPT-SoVITS), [공식 모델 배포](https://huggingface.co/lj1995/GPT-SoVITS), [OpenVoice](https://github.com/myshell-ai/OpenVoice), [MeloTTS](https://github.com/myshell-ai/MeloTTS).

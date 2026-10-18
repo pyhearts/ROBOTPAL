@@ -1,6 +1,8 @@
 """No models, network, live microphone, or audible playback are used here."""
 
 import contextlib
+from dataclasses import replace
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -205,7 +207,7 @@ class PlaybackTests(unittest.TestCase):
     def create_service(self, root, worker=None):
         voice = root / "voice.json"
         voice.write_text(json.dumps({"voice_version": "voice1", "model_version": "model1"}), encoding="utf-8")
-        options = local_tts.TTSOptions(voice=voice, cache=root / "cache")
+        options = local_tts.TTSOptions(voice=voice, cache=root / "cache", engine="openvoice")
         worker = worker or Mock()
         if worker.request.side_effect is None:
             worker.request.side_effect = lambda action, **data: make_wav(Path(data["output"]))
@@ -326,6 +328,57 @@ class CLITests(unittest.TestCase):
 
 
 class WorkerProtocolTests(unittest.TestCase):
+    def test_natural_style_separates_short_greeting_but_keeps_decimals(self):
+        from module.local_tts_worker import split_phrases
+        self.assertEqual(split_phrases("안녕하세요. 3.5미터에 관한 설명입니다."),
+                         ["안녕하세요.", "3.5미터에 관한 설명입니다."])
+        self.assertEqual(split_phrases("안녕하세요! 반가워요?"), ["안녕하세요!", "반가워요?"])
+
+    def test_natural_style_changes_duration_settings_and_sentence_pause(self):
+        from module.local_tts_worker import OpenVoiceBackend
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            embedding = root / "speaker.pth"
+            embedding.write_bytes(b"owned-test-embedding")
+            voice = root / "voice.json"
+            voice.write_text(json.dumps({"model_version": "test-model", "embedding": str(embedding),
+                "voice_version": hashlib.sha256(embedding.read_bytes()).hexdigest()}), encoding="utf-8")
+            backend = OpenVoiceBackend.__new__(OpenVoiceBackend)
+            backend._voice = str(voice)
+            backend._target = object()
+            backend.speaker_id = 0
+            backend.source_se = object()
+            backend.model_version = lambda: "test-model"
+            backend.model = Mock()
+            backend.model.hps.data.sampling_rate = 16000
+            backend.model.tts_to_file.return_value = np.zeros(16000, dtype="float32")
+            backend.converter = Mock()
+            frames = []
+            def convert(path, *args, **kwargs):
+                with wave.open(str(path), "rb") as audio:
+                    frames.append(audio.getnframes())
+            backend.converter.convert.side_effect = convert
+            backend.synthesize("안녕하세요. 반갑습니다.", root / "out.wav", voice, 1, "natural")
+            self.assertEqual(backend.model.tts_to_file.call_count, 2)
+            self.assertEqual(backend.model.tts_to_file.call_args.kwargs["sdp_ratio"], .55)
+            self.assertEqual(frames, [16000 * 2 + round(16000 * .18)])
+
+    def test_style_uses_separate_cache_and_cli_forwards_choice(self):
+        result = main._build_parser().parse_args(["--assist", "--tts", "--tts-style", "natural"])
+        self.assertEqual(result.tts_style, "natural")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            worker = Mock()
+            worker.request.side_effect = lambda action, **data: make_wav(Path(data["output"]))
+            standard = local_tts.LocalTTS(local_tts.TTSOptions(cache=root, engine="openvoice"), worker=worker)
+            standard._voice_version, standard._model_version = "voice", "model"
+            first = standard.synthesize("안녕하세요.")[0]
+            natural = local_tts.LocalTTS(replace(standard.options, style="natural"), worker=worker)
+            natural._voice_version, natural._model_version = "voice", "model"
+            second = natural.synthesize("안녕하세요.")[0]
+            self.assertNotEqual(first, second)
+            self.assertEqual(worker.request.call_args.kwargs["style"], "natural")
+
     def test_worker_explicitly_blocks_network(self):
         from module import local_tts_worker
         import socket

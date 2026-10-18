@@ -19,17 +19,18 @@ from module.session_log import capture_output, command_context
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--voice", type=Path, default=ROOT / "data/tts/voice.json")
+    parser.add_argument("--voice", type=Path)
+    parser.add_argument("--engine", choices=("gpt-sovits", "openvoice"), default="gpt-sovits")
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--compare-stt", action="store_true")
     args = parser.parse_args()
     folder = ROOT / "reports" / ("tts_" + time.strftime("%Y%m%d_%H%M%S"))
     folder.mkdir(parents=True, exist_ok=False)
-    options = TTSOptions(voice=args.voice, cache=folder, threads=args.threads)
+    options = TTSOptions(voice=args.voice, cache=folder, threads=args.threads, engine=args.engine)
     tts = LocalTTS(options)
-    metadata = json.loads(args.voice.read_text(encoding="utf-8"))
+    metadata = json.loads(options.voice.read_text(encoding="utf-8"))
     tts._voice_version, tts._model_version = metadata["voice_version"], metadata["model_version"]
-    report = {"threads": args.threads, "voice": str(args.voice), "samples": [],
+    report = {"threads": args.threads, "voice": str(options.voice), "engine": args.engine, "samples": [],
               "speaker_playback_tested": False, "network_disabled_in_worker": True}
     transcriber = None
     with capture_output():
@@ -39,7 +40,8 @@ def main() -> int:
                 from module.speech import create_speech_transcriber
                 from module.speech_quality import SpeechOptions
                 from module.speech_evaluation import load_evaluation_audio
-                samples = load_evaluation_audio(Path(metadata["prepared_reference"]))[:3 * 16000]
+                reference = metadata.get("prepared_reference") or metadata["references"][0]["audio"]
+                samples = load_evaluation_audio(Path(reference))[:3 * 16000]
                 transcriber = create_speech_transcriber(SpeechOptions(live_preview=False), offline=True)
                 # Warm-up is excluded. Do not publish the person's reference transcript.
                 transcriber.transcribe_audio(samples)

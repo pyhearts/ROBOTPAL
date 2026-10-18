@@ -1,0 +1,24 @@
+# Separate CPU Python 3.10 runtime; never installed into the application's .venv.
+numpy==1.26.4
+matplotlib==3.9.4
+scipy==1.12.0
+librosa==0.10.2
+soundfile==0.12.1
+numba==0.60.0
+transformers==4.45.2
+huggingface-hub==0.26.2
+peft==0.13.2
+pytorch-lightning==2.4.0
+torchmetrics==1.5.2
+ffmpeg-python==0.2.0
+PyYAML==6.0.2
+psutil>=5.9,<7
+einops>=0.8,<1
+x-transformers>=1.31,<2
+g2pk2==0.0.3
+python-mecab-ko==1.3.7
+ko-pron>=1.3,<2
+jamo==0.4.1
+sentencepiece>=0.2,<1
+tqdm>=4.66,<5
+setuptools==75.8.0

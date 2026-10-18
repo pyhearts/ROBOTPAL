@@ -190,7 +190,8 @@ flowchart TD
     Q -->|아니요| SKIP[음성만 생략하고 로그 기록]
     Q -->|예| CACHE{동일 문장·목소리·모델·속도 캐시?}
     CACHE -->|예| WAV[WAV 파일]
-    CACHE -->|아니요| WORKER[별도 CPU 작업자 - MeloTTS 한국어 + OpenVoice V2]
+    CACHE -->|아니요| REF[질문·평서문에 맞는 녹음·대본 선택 + 다른 녹음 보조 참조]
+    REF --> WORKER[별도 CPU 작업자 - GPT-SoVITS v2ProPlus]
     WORKER --> WAV
     WORKER -->|60초 초과 또는 오류| ERR[오류 기록 후 다음 출력 계속]
     WAV --> LOG[실행별 audio 폴더와 command_id 로그 연결]
@@ -199,4 +200,4 @@ flowchart TD
     PLAY --> RESUME[300ms 잔향 제외 및 감지 버퍼 초기화]
 ```
 
-합성 중에는 듣기를 유지하며 재생 중에는 끼어들기를 지원하지 않습니다. 버퍼에 남거나 늦게 전사된 재생 구간도 제외합니다. 기존 AI 답변·계획 API는 유지하고 TTS 작업자는 네트워크와 API 키 없이 실행합니다. 최초 모델 다운로드는 `setup_tts.py`, 기준 음성과 고정 안내 준비는 `--prepare-tts`, API 없는 시험 재생은 `--test-tts`를 사용합니다. 상세 사용법은 [TTS_GUIDE.md](TTS_GUIDE.md)에 있습니다.
+합성 중에는 듣기를 유지하며 재생 중에는 끼어들기를 지원하지 않습니다. 버퍼에 남거나 늦게 전사된 재생 구간도 제외합니다. 기존 AI 답변·계획 API는 유지하고 TTS 작업자는 네트워크와 API 키 없이 실행합니다. 최초 모델 다운로드는 `setup_reference_tts.py`, 기준 녹음·자동 대본 준비는 `--prepare-tts`, API 없는 시험 재생은 `--test-tts`를 사용합니다. 원본은 유지하고 3~10초 발화 사본을 참조합니다. 기존 OpenVoice는 `--tts-engine openvoice`로 선택합니다. 상세 사용법은 [TTS_GUIDE.md](TTS_GUIDE.md)에 있습니다.

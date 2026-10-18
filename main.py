@@ -50,11 +50,13 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--prepare-tts", action="store_true", help="기준 녹음으로 로컬 목소리와 고정 안내를 준비합니다.")
     mode.add_argument("--test-tts", metavar="TEXT", help="API 없이 로컬 TTS 문장을 시험 재생합니다.")
     parser.add_argument("--tts", action="store_true", help="--assist 또는 --plan 결과를 로컬 음성으로 읽습니다.")
+    parser.add_argument("--tts-engine", choices=("gpt-sovits", "openvoice"), default="gpt-sovits", help="로컬 음성 엔진 (기본: 녹음·대본 참조 GPT-SoVITS)")
     parser.add_argument("--tts-reference", type=Path, nargs="+", help="--prepare-tts에 사용할 기준 녹음 경로 (여러 개 가능)")
     parser.add_argument("--tts-voice", type=Path, help="준비된 목소리 JSON 경로")
-    parser.add_argument("--tts-python", type=Path, help="TTS 전용 Python 경로 (기본 .tts-venv)")
-    parser.add_argument("--tts-models", type=Path, help="TTS 모델 폴더 (기본 models/tts)")
+    parser.add_argument("--tts-python", type=Path, help="TTS 전용 Python 경로 (선택 엔진의 기본 환경)")
+    parser.add_argument("--tts-models", type=Path, help="TTS 모델 폴더 (선택 엔진의 기본 모델)")
     parser.add_argument("--tts-speed", type=float, default=1.0, help="음성 속도 0.5~2 (기본 1)")
+    parser.add_argument("--tts-style", choices=("standard", "natural"), default="standard", help="OpenVoice 비교 말투: standard 또는 natural (GPT-SoVITS는 참조 발화 사용)")
     parser.add_argument("--output-device", type=int, help="사용할 스피커 번호 (--list-speakers)")
     parser.add_argument("--command", help="--plan에 전달할 명령 (생략하면 입력을 요청합니다)")
     parser.add_argument("--camera", type=int, default=0, help="사용할 카메라 번호 (기본값: 0)")
@@ -106,7 +108,7 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
         parser.error("--prepare-tts에는 --tts-reference가 필요합니다.")
     if args.tts_reference is not None and not args.prepare_tts:
         parser.error("--tts-reference는 --prepare-tts에서 사용합니다.")
-    if supplied_flags & {"--tts-voice", "--tts-python", "--tts-models", "--tts-speed", "--output-device"} and not tts_mode:
+    if supplied_flags & {"--tts-voice", "--tts-python", "--tts-models", "--tts-speed", "--tts-style", "--tts-engine", "--output-device"} and not tts_mode:
         parser.error("TTS 설정은 --tts, --prepare-tts 또는 --test-tts에서 사용합니다.")
     if args.test_tts is not None and not 1 <= len(args.test_tts.strip()) <= 300:
         parser.error("--test-tts 문장은 1~300자여야 합니다.")
@@ -134,7 +136,7 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
         tts_options = None
         if tts_mode:
             from module.local_tts import TTSOptions
-            tts_kwargs = {"speed": args.tts_speed, "output_device": args.output_device}
+            tts_kwargs = {"speed": args.tts_speed, "output_device": args.output_device, "style": args.tts_style, "engine": args.tts_engine}
             for field, value in [("voice", args.tts_voice), ("python", args.tts_python), ("models", args.tts_models)]:
                 if value is not None:
                     tts_kwargs[field] = value

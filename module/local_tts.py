@@ -27,22 +27,36 @@ DEFAULT_PYTHON = ROOT / ".tts-venv" / ("Scripts/python.exe" if os.name == "nt" e
 
 @dataclass(frozen=True)
 class TTSOptions:
-    python: Path = DEFAULT_PYTHON
-    models: Path = ROOT / "models/tts"
-    voice: Path = ROOT / "data/tts/voice.json"
+    python: Path | None = None
+    models: Path | None = None
+    voice: Path | None = None
     cache: Path = ROOT / "data/tts/cache"
     output_device: int | None = None
     speed: float = 1.0
+    style: str = "standard"
     threads: int = 2
-    timeout: float = 60.0
+    timeout: float | None = None
+    engine: str = "gpt-sovits"
+    source: Path = ROOT / ".gsv-sources/GPT-SoVITS"
 
     def __post_init__(self) -> None:
+        if self.engine not in {"openvoice", "gpt-sovits"}:
+            raise ValueError("TTS 엔진은 openvoice 또는 gpt-sovits여야 합니다.")
+        defaults = {"python": DEFAULT_PYTHON if self.engine == "openvoice" else ROOT / ".gsv-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python"),
+                    "models": ROOT / ("models/tts" if self.engine == "openvoice" else "models/reference_tts"),
+                    "voice": ROOT / ("data/tts/voice.json" if self.engine == "openvoice" else "data/tts/reference_voice.json"),
+                    "timeout": 60.0 if self.engine == "openvoice" else 240.0}
+        for name, value in defaults.items():
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, value)
         if not math.isfinite(self.speed) or not .5 <= self.speed <= 2:
             raise ValueError("TTS 속도는 0.5~2여야 합니다.")
         if not 1 <= self.threads <= 8 or not math.isfinite(self.timeout) or self.timeout <= 0:
             raise ValueError("TTS 스레드 또는 제한 시간이 올바르지 않습니다.")
         if self.output_device is not None and self.output_device < 0:
             raise ValueError("스피커 번호는 0 이상이어야 합니다.")
+        if self.style not in {"standard", "natural"}:
+            raise ValueError("TTS 말투는 standard 또는 natural이어야 합니다.")
 
 
 def spoken_text(result: Any) -> str:
@@ -87,9 +101,10 @@ class WorkerClient:
         if self.process is not None:
             return
         if not self.options.python.is_file():
-            raise RuntimeError("로컬 TTS 환경이 없습니다. .venv의 Python으로 setup_tts.py를 실행하세요.")
+            installer = "setup_tts.py" if self.options.engine == "openvoice" else "setup_reference_tts.py"
+            raise RuntimeError(f"로컬 TTS 환경이 없습니다. .venv의 Python으로 {installer}를 실행하세요.")
         if not (self.options.models / "manifest.json").is_file():
-            raise RuntimeError("TTS 모델이 없습니다. setup_tts.py를 먼저 실행하세요.")
+            raise RuntimeError("TTS 모델이 없습니다. 선택한 엔진의 설치 도구를 먼저 실행하세요.")
         self._responses = queue.Queue()
         responses = self._responses
         env = os.environ.copy()
@@ -99,7 +114,8 @@ class WorkerClient:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         process = subprocess.Popen(
             [str(self.options.python), "-u", str(Path(__file__).with_name("local_tts_worker.py")),
-             "--models", str(self.options.models.resolve()), "--threads", str(self.options.threads)],
+             "--models", str(self.options.models.resolve()), "--threads", str(self.options.threads),
+             "--engine", self.options.engine, "--source", str(self.options.source.resolve())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", env=env, creationflags=flags,
         )
@@ -193,6 +209,9 @@ class LocalTTS:
         if not self.options.voice.is_file():
             raise RuntimeError("기준 목소리가 준비되지 않았습니다. --prepare-tts --tts-reference 경로를 실행하세요.")
         metadata = json.loads(self.options.voice.read_text(encoding="utf-8"))
+        if self.options.engine == "gpt-sovits":
+            from .reference_tts_backend import validate_profile
+            validate_profile(metadata, self.options.models)
         self._voice_version = metadata["voice_version"]
         self._model_version = metadata["model_version"]
         self.options.cache.mkdir(parents=True, exist_ok=True)
@@ -204,7 +223,7 @@ class LocalTTS:
         self._thread = threading.Thread(target=self._run, name="tts-playback", daemon=True)
         self._thread.start()
         record_event("tts_ready", voice_version=self._voice_version, model_version=self._model_version,
-                     output_device=self.options.output_device, speed=self.options.speed)
+                     output_device=self.options.output_device, speed=self.options.speed, style=self.options.style)
         print("로컬 TTS 준비 완료. 음성 재생 중에는 사용자 음성을 인식하지 않습니다.", flush=True)
 
     def submit_result(self, result: Any, command_id: str) -> bool:
@@ -223,9 +242,16 @@ class LocalTTS:
                 return False
 
     def synthesize(self, text: str) -> tuple[Path, bool, float]:
-        key = hashlib.sha256(json.dumps({"text": text, "voice": self._voice_version,
+        settings = {"text": text, "voice": self._voice_version,
             "model": self._model_version, "speed": self.options.speed,
-            "pipeline": 1}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            "pipeline": 1}
+        if self.options.engine != "openvoice":
+            settings["engine"] = self.options.engine
+            settings["reference_pipeline"] = 2
+        if self.options.style != "standard":
+            settings["style"] = self.options.style
+            settings["style_version"] = 1
+        key = hashlib.sha256(json.dumps(settings, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         path = self.options.cache / f"{key}.wav"
         if path.is_file():
             try:
@@ -237,10 +263,11 @@ class LocalTTS:
         temporary = self.options.cache / f"{key}.{uuid.uuid4().hex}.wav"
         try:
             profile = self.worker.request("synthesize", text=text, output=str(temporary.resolve()),
-                                          voice=str(self.options.voice.resolve()), speed=self.options.speed)
+                                          voice=str(self.options.voice.resolve()), speed=self.options.speed,
+                                          style=self.options.style)
             if isinstance(profile, dict):
                 record_event("tts_synthesis_profile", **{k: profile[k] for k in
-                    ["base_synthesis_seconds", "voice_conversion_seconds"] if k in profile})
+                    ["base_synthesis_seconds", "voice_conversion_seconds", "reference_id", "auxiliary_reference_ids", "engine"] if k in profile})
             wav_info(temporary)
             try:
                 temporary.replace(path)
@@ -290,6 +317,8 @@ class LocalTTS:
                                      cache_hit=cached, synthesis_seconds=elapsed, audio_seconds=duration,
                                      sample_rate=rate, voice_version=self._voice_version,
                                      model_version=self._model_version, speed=self.options.speed,
+                                     style=self.options.style,
+                                     engine=self.options.engine,
                                      queue_wait_seconds=max(0, time.monotonic() - queued_at - elapsed))
                         record_event("tts_playback_start")
                         self._play(path)
@@ -397,6 +426,15 @@ def prepare_voice(options: TTSOptions, reference: Path | list[Path]) -> None:
         raise ValueError("기준 녹음 파일을 찾을 수 없습니다.")
     if options.voice.exists():
         raise ValueError("기존 목소리 설정을 덮어쓰지 않습니다. --tts-voice로 새 파일을 지정하세요.")
+    if options.engine == "gpt-sovits":
+        from .reference_voice import curate_references, finalize_voice
+        if not (options.models / "manifest.json").is_file():
+            raise ValueError("setup_reference_tts.py로 모델을 먼저 설치하세요.")
+        dataset = curate_references(originals, options.voice.parent / ("references_" + uuid.uuid4().hex[:10]))
+        finalize_voice(dataset, options.models, options.voice)
+        print(f"참조 목소리 준비 완료: {options.voice}", flush=True)
+        prepare_fixed_guidance(options)
+        return
     directory = options.voice.parent / "imports"
     reference = (import_reference(originals[0], directory) if len(originals) == 1
                  else combine_references(originals, directory))
@@ -408,16 +446,28 @@ def prepare_voice(options: TTSOptions, reference: Path | list[Path]) -> None:
         options.voice.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"목소리 특성 준비 완료: {options.voice}", flush=True)
         # Keep the same loaded model for embedding extraction and fixed guidance.
-        from .decision_router import FIXED_MESSAGES
-        tts = LocalTTS(options, worker=worker)
-        metadata = json.loads(options.voice.read_text(encoding="utf-8"))
-        tts._voice_version, tts._model_version = metadata["voice_version"], metadata["model_version"]
-        options.cache.mkdir(parents=True, exist_ok=True)
-        messages = [v for k, v in FIXED_MESSAGES.items() if k != "not_command"] + ["정지 계획을 접수했습니다."]
+        prepare_fixed_guidance(options, worker=worker)
+    finally:
+        worker.close()
+    print(f"기준 목소리와 고정 안내 준비 완료: {options.voice}", flush=True)
+
+
+def prepare_fixed_guidance(options: TTSOptions, *, worker=None) -> None:
+    from .decision_router import FIXED_MESSAGES
+    own_worker = worker is None
+    tts = LocalTTS(options, worker=worker)
+    metadata = json.loads(options.voice.read_text(encoding="utf-8"))
+    if options.engine == "gpt-sovits":
+        from .reference_tts_backend import validate_profile
+        validate_profile(metadata, options.models)
+    tts._voice_version, tts._model_version = metadata["voice_version"], metadata["model_version"]
+    options.cache.mkdir(parents=True, exist_ok=True)
+    messages = [v for k, v in FIXED_MESSAGES.items() if k != "not_command"] + ["정지 계획을 접수했습니다."]
+    try:
         for index, text in enumerate(messages, 1):
             print(f"고정 안내 준비 중: {index}/{len(messages)}", flush=True)
             path, _, elapsed = tts.synthesize(text)
             record_event("tts_fixed_prepared", text=text, path=str(path), synthesis_seconds=elapsed)
     finally:
-        worker.close()
-    print(f"기준 목소리와 고정 안내 준비 완료: {options.voice}", flush=True)
+        if own_worker:
+            tts.worker.close()

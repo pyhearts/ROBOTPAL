@@ -15,3 +15,5 @@ evaluation_audio/
 .tts-sources/
 data/tts/
 /*.m4a
+.gsv-venv/
+.gsv-sources/

@@ -29,7 +29,7 @@ $env:OPENAI_MODEL = "gpt-5.4-mini"
 
 ## 로컬 음성 출력 (선택)
 
-TTS는 외부 API 없이 MeloTTS + OpenVoice V2를 사용합니다. 별도 환경 설치, 기준 녹음 준비, 시험 재생은 [TTS_GUIDE.md](TTS_GUIDE.md)를 참고하세요.
+TTS는 외부 API 없이 GPT-SoVITS v2ProPlus로 녹음과 대본을 참조해 억양·리듬을 생성합니다. 두 기준 녹음에서 4개 구간을 준비했으며 원본은 보존했습니다. 기존 MeloTTS + OpenVoice V2는 `--tts-engine openvoice`로 사용할 수 있습니다. 설치·대본 검수·시험 재생은 [TTS_GUIDE.md](TTS_GUIDE.md)를 참고하세요. CPU에서는 문장 합성에 수십 초가 걸릴 수 있습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --tts
