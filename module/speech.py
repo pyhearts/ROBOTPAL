@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import numpy as np
+from .session_log import record_event
+from .speech_quality import (SpeechOptions, SileroProbability, SpeechTranscriber,
+                             TranscriptionResult, InputMeter, RETRY_MESSAGE,
+                             prepare_microphone, options_dict)
 
 SAMPLE_RATE = 16_000
 WINDOW_SECONDS = 4.0
@@ -306,14 +310,19 @@ class TranscriptionTask:
     final: bool
     end_time: float
     identity_audio: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    speech_end_time: float | None = None
 
 
 class _StreamState:
-    def __init__(self, stream_id: int, sample_rate: int, *, collect_identity: bool = True) -> None:
+    def __init__(self, stream_id: int, sample_rate: int, *, collect_identity: bool = True,
+                 pre_roll: float = PRE_ROLL_SECONDS, silence: float = SILENCE_SECONDS,
+                 min_speech: float = MIN_SPEECH_SECONDS) -> None:
         self.stream_id = stream_id
         self.sample_rate = sample_rate
         self.collect_identity = collect_identity
-        self.pre_roll: deque[np.ndarray] = deque(maxlen=max(1, round(PRE_ROLL_SECONDS * sample_rate / VAD_BLOCK_SAMPLES)))
+        self.silence_seconds, self.min_speech_seconds = silence, min_speech
+        self.pre_roll: deque[np.ndarray] = deque()
+        self.pre_roll_limit = round(pre_roll * sample_rate)
         self.active = False
         self.parts: list[np.ndarray] = []
         self.identity_parts: list[np.ndarray] = []
@@ -322,6 +331,7 @@ class _StreamState:
         self.speech_samples = 0
         self.silence_samples = 0
         self.utterance_id = ""
+        self.last_voice_end: float | None = None
 
     def _clear(self) -> None:
         self.active = False
@@ -329,6 +339,7 @@ class _StreamState:
         self.identity_parts.clear()
         self.identity_samples = self.buffered_samples = self.speech_samples = self.silence_samples = 0
         self.utterance_id = ""
+        self.last_voice_end = None
         self.pre_roll.clear()
 
     def _audio(self) -> np.ndarray:
@@ -337,12 +348,18 @@ class _StreamState:
     def _identity_audio(self) -> np.ndarray:
         return np.concatenate(self.identity_parts) if self.identity_parts else np.empty(0, dtype=np.float32)
 
-    def feed(self, block: np.ndarray, end_time: float) -> list[TranscriptionTask]:
+    def feed(self, block: np.ndarray, end_time: float, *, voiced: bool | None = None) -> list[TranscriptionTask]:
         block = np.asarray(block, dtype=np.float32).reshape(-1)
-        voiced = _rms(block) >= VAD_THRESHOLD
+        if voiced is None:
+            voiced = _rms(block) >= VAD_THRESHOLD
         tasks: list[TranscriptionTask] = []
+        if voiced:
+            self.last_voice_end = end_time
         if not self.active:
             self.pre_roll.append(block)
+            total = sum(len(part) for part in self.pre_roll)
+            while len(self.pre_roll) > 1 and total - len(self.pre_roll[0]) >= self.pre_roll_limit:
+                total -= len(self.pre_roll.popleft())
             if not voiced:
                 return tasks
             self.active = True
@@ -365,20 +382,25 @@ class _StreamState:
             self.identity_parts.append(kept)
             self.identity_samples += len(kept)
         if self.buffered_samples >= round(PARTIAL_SECONDS * self.sample_rate):
-            tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), False, end_time))
+            tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), False, end_time,
+                                          speech_end_time=self.last_voice_end))
             self.parts.clear()
             self.buffered_samples = 0
-        if self.silence_samples >= round(SILENCE_SECONDS * self.sample_rate):
-            if self.speech_samples >= round(MIN_SPEECH_SECONDS * self.sample_rate):
-                tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time, self._identity_audio()))
+        if self.silence_samples >= round(self.silence_seconds * self.sample_rate):
+            if self.speech_samples >= round(self.min_speech_seconds * self.sample_rate):
+                tasks.append(TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time,
+                                              self._identity_audio(), self.last_voice_end))
+            else:
+                record_event("vad_short_utterance_discarded", speech_seconds=self.speech_samples / self.sample_rate)
             self._clear()
         return tasks
 
     def flush(self, end_time: float) -> list[TranscriptionTask]:
-        if not self.active or self.speech_samples < round(MIN_SPEECH_SECONDS * self.sample_rate):
+        if not self.active or self.speech_samples < round(self.min_speech_seconds * self.sample_rate):
             self._clear()
             return []
-        task = TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time, self._identity_audio())
+        task = TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time,
+                                 self._identity_audio(), self.last_voice_end)
         self._clear()
         return [task]
 
@@ -386,15 +408,28 @@ class _StreamState:
 class MonoUtteranceDetector:
     """Detect utterances directly in mono microphone blocks, without separation."""
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
+    def __init__(self, sample_rate: int = SAMPLE_RATE, *, probability: Any = None,
+                 options: SpeechOptions | None = None) -> None:
         self.sample_rate = sample_rate
-        self.state = _StreamState(-1, sample_rate, collect_identity=False)
+        self.options = options or (SpeechOptions() if probability is not None else None)
+        if probability is not None and sample_rate != SAMPLE_RATE:
+            raise ValueError("스트리밍 Silero 입력은 16000 Hz여야 합니다.")
+        self.probability = probability
+        kwargs = {} if self.options is None else {"pre_roll": self.options.pre_roll, "silence": self.options.silence,
+                                                 "min_speech": self.options.min_speech}
+        self.state = _StreamState(-1, sample_rate, collect_identity=False, **kwargs)
         self.last_end_time: float | None = None
+        self.pending = np.empty(0, dtype=np.float32)
+        self.pending_start: float | None = None
 
     def process(self, mono: np.ndarray, start_time: float) -> list[TranscriptionTask]:
         mono = np.asarray(mono, dtype=np.float32)
         if mono.ndim != 1:
             raise ValueError("모노 마이크 오디오가 필요합니다.")
+        if not np.all(np.isfinite(mono)):
+            raise ValueError("마이크 오디오에 유효하지 않은 수치가 있습니다.")
+        if self.probability is not None:
+            return self._process_silero(mono, start_time)
         tasks: list[TranscriptionTask] = []
         for offset in range(0, len(mono), VAD_BLOCK_SAMPLES):
             block_end = min(offset + VAD_BLOCK_SAMPLES, len(mono))
@@ -403,9 +438,38 @@ class MonoUtteranceDetector:
         return tasks
 
     def flush(self) -> list[TranscriptionTask]:
+        tasks: list[TranscriptionTask] = []
+        if self.probability is not None and self.pending.size:
+            padded = np.pad(self.pending, (0, 512 - len(self.pending)))
+            score = self.probability(padded)
+            end = self.pending_start + len(self.pending) / self.sample_rate
+            tasks.extend(self.state.feed(self.pending, end, voiced=score >= self.options.vad_threshold))
+            self.last_end_time = end
+            self.pending = np.empty(0, dtype=np.float32)
+            self.pending_start = None
         if self.last_end_time is None:
             return []
-        return self.state.flush(self.last_end_time)
+        return tasks + self.state.flush(self.last_end_time)
+
+    def _process_silero(self, mono: np.ndarray, start_time: float) -> list[TranscriptionTask]:
+        if self.pending.size == 0:
+            self.pending_start = start_time
+        self.pending = np.concatenate([self.pending, mono])
+        tasks = []
+        while len(self.pending) >= 512:
+            frame = self.pending[:512].copy()
+            self.pending = self.pending[512:]
+            self.last_end_time = self.pending_start + 512 / self.sample_rate
+            score = self.probability(frame)
+            emitted = self.state.feed(frame, self.last_end_time, voiced=score >= self.options.vad_threshold)
+            tasks.extend(emitted)
+            for task in emitted:
+                record_event("vad_utterance_chunk", utterance_id=task.utterance_id, final=task.final,
+                             duration_seconds=len(task.audio) / self.sample_rate,
+                             final_frame_probability=score, threshold=self.options.vad_threshold,
+                             speech_end_time=task.speech_end_time, detected_at=task.end_time)
+            self.pending_start = self.last_end_time
+        return tasks
 
 
 class PerStreamUtteranceDetector:
@@ -480,6 +544,9 @@ def handle_transcription(speaker: str, text: str) -> None:
 def transcribe_utterance(model: object, audio: np.ndarray) -> str:
     if audio.size == 0:
         return ""
+    if isinstance(model, SpeechTranscriber):
+        result = model.transcribe_audio(audio)
+        return result.text if result.accepted else ""
     segments, _ = model.transcribe(audio, language="ko", beam_size=1, vad_filter=True)  # type: ignore[attr-defined]
     return " ".join(segment.text.strip() for segment in segments).strip()
 
@@ -613,23 +680,40 @@ def enroll_speakers() -> None:
 
 def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier | None, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None]) -> None:
     partial_text: dict[str, list[str]] = {}
+    rejected: set[str] = set()
     while True:
         task = tasks.get()
         try:
             if task is _STOP:
                 return
             assert isinstance(task, TranscriptionTask)
+            started = time.monotonic()
             try:
                 text = transcribe_utterance(whisper, task.audio)
+                quality = getattr(whisper, "last_result", None)
+                if isinstance(quality, TranscriptionResult) and not quality.accepted:
+                    rejected.add(task.utterance_id)
             except Exception as exc:
                 print(f"음성 구간을 인식하지 못했습니다: {exc}", file=sys.stderr)
                 text = ""
+                rejected.add(task.utterance_id)
+            record_event("stt_chunk", utterance_id=task.utterance_id, final=task.final,
+                         text=text, queue_wait_seconds=max(0, started - task.end_time),
+                         processing_seconds=time.monotonic() - started)
             texts = partial_text.setdefault(task.utterance_id, [])
             if text:
                 texts.append(text)
             if task.final:
                 complete = " ".join(texts).strip()
                 partial_text.pop(task.utterance_id, None)
+                if task.utterance_id in rejected:
+                    rejected.discard(task.utterance_id)
+                    complete = ""
+                    print(RETRY_MESSAGE, flush=True)
+                record_event("stt_utterance", utterance_id=task.utterance_id, text=complete,
+                             accepted=bool(complete),
+                             end_to_transcript_seconds=max(0, time.monotonic() - (
+                                 task.end_time if task.speech_end_time is None else task.speech_end_time)))
                 if complete:
                     try:
                         speaker = (
@@ -689,19 +773,24 @@ def _load_transcription_dependencies():
     return sd, WhisperModel
 
 
-def _load_whisper_model(WhisperModel, *, offline: bool = False):
-    print(f"한국어 Whisper 모델({WHISPER_MODEL_NAME})을 준비합니다.")
+def _load_whisper_model(WhisperModel, *, offline: bool = False, options: SpeechOptions | None = None):
+    options = options or SpeechOptions()
+    print(f"한국어 Whisper 모델({options.model})을 준비합니다 ({options.device}, {options.compute_type}).")
     try:
-        whisper_source = WHISPER_MODEL_NAME
+        if options.device == "cuda":
+            import ctranslate2
+            if ctranslate2.get_cuda_device_count() == 0:
+                raise RuntimeError("사용 가능한 CUDA GPU가 없습니다. --stt-device cpu를 사용해 주세요.")
+        whisper_source = options.model
         if offline:
             from faster_whisper.utils import download_model
 
-            whisper_source = download_model(WHISPER_MODEL_NAME, local_files_only=True)
+            whisper_source = download_model(options.model, local_files_only=True)
             # Whisper otherwise falls back to an online tokenizer even with local weights.
             if not (Path(whisper_source) / "tokenizer.json").is_file():
                 raise RuntimeError("로컬 Whisper tokenizer.json이 없습니다.")
         return WhisperModel(
-            whisper_source, device="cpu", compute_type="int8", local_files_only=offline
+            whisper_source, device=options.device, compute_type=options.compute_type, local_files_only=offline
         )
     except Exception as exc:
         if offline:
@@ -712,23 +801,43 @@ def _load_whisper_model(WhisperModel, *, offline: bool = False):
         raise RuntimeError(f"Whisper 모델을 준비하지 못했습니다: {exc}") from exc
 
 
+def create_speech_transcriber(options: SpeechOptions, *, offline: bool = False, WhisperModel: Any = None) -> SpeechTranscriber:
+    record_event("stt_configuration", **options_dict(options))
+    if options.backend == "openai":
+        if offline:
+            raise ValueError("offline 모드에서는 API 전사를 사용할 수 없습니다.")
+        from .action_planner import create_api_client
+        print("API 전사 선택: 발화 오디오를 OpenAI gpt-transcribe로 전송합니다. 사용료가 발생합니다.", flush=True)
+        return SpeechTranscriber(None, options, client=create_api_client())
+    if WhisperModel is None:
+        from faster_whisper import WhisperModel
+    return SpeechTranscriber(_load_whisper_model(WhisperModel, offline=offline, options=options), options)
+
+
 def run_live_transcription(
     on_transcription: Callable[[str, str], None] = handle_transcription,
     *,
     offline: bool = False,
     identify_speakers: bool = False,
+    options: SpeechOptions | None = None,
 ) -> None:
     """Pass mono mic audio straight to VAD and Whisper without SepFormer.
 
     Explicit legacy identification remains available for library callers only.
     """
     if identify_speakers:
+        if options is not None:
+            raise ValueError("새 음성 설정은 직접 마이크 입력 모드에서만 사용할 수 있습니다.")
         run_separated_transcription(on_transcription, offline=offline, identify_speakers=True)
         return
     sd, WhisperModel = _load_transcription_dependencies()
-    whisper = _load_whisper_model(WhisperModel, offline=offline)
-    detector = MonoUtteranceDetector()
-    captured: queue.Queue[tuple[np.ndarray, float]] = queue.Queue()
+    options = options or SpeechOptions()
+    prepare_microphone(sd, options.input_device)
+    probability = SileroProbability()
+    detector = MonoUtteranceDetector(probability=probability, options=options)
+    whisper = create_speech_transcriber(options, offline=offline, WhisperModel=WhisperModel)
+    meter = InputMeter()
+    captured: queue.Queue[tuple[np.ndarray, float, str]] = queue.Queue()
     transcript_tasks: queue.Queue[TranscriptionTask | object] = queue.Queue()
     transcript_thread = threading.Thread(
         target=_transcription_worker,
@@ -739,24 +848,26 @@ def run_live_transcription(
     def capture_audio(indata, frames, time_info, status) -> None:
         del frames, time_info
         received_at = time.monotonic()
+        audio = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
+        captured.put((audio, received_at - len(audio) / SAMPLE_RATE, str(status) if status else ""))
+
+    def process_block(item: tuple[np.ndarray, float, str]) -> None:
+        audio, start_time, status = item
         if status:
             print(f"마이크 상태: {status}", file=sys.stderr)
-        audio = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
-        captured.put((audio, received_at - len(audio) / SAMPLE_RATE))
-
-    def process_block(item: tuple[np.ndarray, float]) -> None:
-        audio, start_time = item
+            record_event("microphone_status", status=status)
+        meter.update(audio, show=options.show_levels)
         for task in detector.process(audio, start_time):
             transcript_tasks.put(task)
 
     transcript_thread.start()
-    print("직접 마이크 입력 모드: 음성 분리 없이 발화 감지와 전사를 수행합니다.")
+    print("직접 마이크 입력 모드: Silero 음성 감지 후 전사합니다 (SepFormer 미사용).")
     print("마이크를 듣고 있습니다. 종료하려면 Ctrl+C를 누르세요.")
     interrupted = False
     try:
         with sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-            blocksize=BLOCK_SIZE, callback=capture_audio,
+            blocksize=BLOCK_SIZE, callback=capture_audio, device=options.input_device,
         ):
             while True:
                 item = captured.get()
@@ -786,9 +897,12 @@ def run_live_transcription(
             for task in detector.flush():
                 transcript_tasks.put(task)
         finally:
-            transcript_tasks.put(_STOP)
-            transcript_tasks.join()
-            transcript_thread.join()
+            try:
+                transcript_tasks.put(_STOP)
+                transcript_tasks.join()
+                transcript_thread.join()
+            finally:
+                whisper.close()
         if interrupted:
             print("음성 인식을 종료했습니다.")
 

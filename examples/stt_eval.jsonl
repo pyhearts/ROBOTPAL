@@ -1,0 +1,5 @@
+{"audio":"../evaluation_audio/forward30.wav","text":"앞으로 30cm 이동해","fields":{"action":"move","direction":"forward","distance_cm":30,"negated":false}}
+{"audio":"../evaluation_audio/left90.wav","text":"왼쪽으로 90도 돌아","fields":{"action":"turn","direction":"left","angle_deg":90,"negated":false}}
+{"audio":"../evaluation_audio/stop.wav","text":"멈춰","fields":{"action":"stop","negated":false}}
+{"audio":"../evaluation_audio/negative.wav","text":"멈추지 마","fields":{"negated":true}}
+{"audio":"../evaluation_audio/noise.wav","text":""}

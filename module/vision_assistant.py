@@ -19,6 +19,7 @@ from .action_planner import (
 from .speech import run_live_transcription
 from .decision_router import classify_command, process_command, print_command_result
 from .session_log import record_event
+from .speech_quality import SpeechOptions
 
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
@@ -250,7 +251,7 @@ class VoiceVisionAssistant:
             self._thread.join()
 
 
-def run_voice_vision_assistant(camera_index: int = 0) -> None:
+def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions | None = None, offline: bool = False) -> None:
     """Accept every voice and send text + JPEG to OpenAI until Ctrl+C."""
     client = create_api_client()
     model = selected_model()
@@ -265,7 +266,12 @@ def run_voice_vision_assistant(camera_index: int = 0) -> None:
         assistant.start()
         print(f"음성·영상 AI 준비 완료: {model} / 화자 등록 없이 모든 음성을 처리합니다.", flush=True)
         print("Decisions에는 텍스트만 전송하며 구체적인 행동 명령만 사진과 함께 계획 API로 보냅니다.", flush=True)
-        run_live_transcription(on_transcription=assistant.on_transcription, identify_speakers=False)
+        speech_kwargs = {}
+        if options is not None:
+            speech_kwargs["options"] = options
+        if offline:
+            speech_kwargs["offline"] = True
+        run_live_transcription(on_transcription=assistant.on_transcription, identify_speakers=False, **speech_kwargs)
     finally:
         try:
             camera.close()

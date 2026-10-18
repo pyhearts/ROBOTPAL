@@ -70,6 +70,14 @@ class DirectDetectorTests(unittest.TestCase):
 
 
 class DirectRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        microphone = patch.object(speech, "prepare_microphone", return_value={"name": "test"})
+        vad = patch.object(speech, "SileroProbability", return_value=lambda frame: float(np.max(np.abs(frame)) > 0.05))
+        microphone.start()
+        vad.start()
+        self.addCleanup(microphone.stop)
+        self.addCleanup(vad.stop)
+
     def test_microphone_audio_reaches_whisper_unchanged_and_drains_on_stop(self):
         # Stop the main loop after the simulated microphone queue is consumed.
         class StopWhenEmpty(queue.Queue):

@@ -15,3 +15,7 @@
 ## Decisions 분류 및 로그 적용 직전 백업
 
 `before_decisions_20261018_113345/`는 마이크를 직접 전사하고 모든 명령을 Responses로 보내던 버전입니다. 소스·테스트·문서·의존성 목록·`.gitignore`와 SHA-256 manifest를 보관했습니다. 현재 SDK는 Decisions 지원을 위해 3.x로 업데이트했습니다. 복원 시 백업의 SDK 2.x 제약과 현재 환경의 차이를 고려하세요.
+
+## 음성 품질 개선 직전 백업
+
+`before_stt_quality_20261018_115215/`는 RMS 발화 감지·Whisper small beam 1을 사용하던 Decisions·로그 버전입니다. 소스·테스트·문서·의존성과 SHA-256 manifest를 보관했습니다. 기존 모델과 등록 자료는 변경하지 않았습니다.

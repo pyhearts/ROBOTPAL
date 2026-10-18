@@ -10,7 +10,7 @@ Python 3.12 환경에서 실행합니다.
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-마이크의 16 kHz 모노 입력을 바로 RMS 기반 발화 감지와 로컬 Whisper small 전사로 전달합니다. 기본 전사 모드와 `--assist`에서는 SepFormer를 불러오거나 실행하지 않고, 4초 창 대기·분리 속도 측정·분리 대기열도 사용하지 않습니다. 최초 실행에는 Whisper 모델 다운로드를 위한 인터넷 연결과 저장 공간이 필요합니다. ECAPA 화자 지문 모델이나 등록 파일도 사용하지 않습니다. Ollama 설치·실행은 필요하지 않습니다.
+마이크의 16 kHz 모노 입력을 Silero VAD로 감지한 뒤 로컬 Whisper small로 전사합니다. 기본 탐색 크기는 beam 3, 시작 전 보존은 0.4초, 최소 음성은 0.12초입니다. Whisper 내부 VAD는 기본 비활성화해 외부 감지와 중복 절단을 피합니다. 기본 전사 모드와 `--assist`에서는 SepFormer를 불러오거나 실행하지 않고, 4초 창 대기·분리 속도 측정·분리 대기열도 사용하지 않습니다. 최초 실행에는 Whisper 모델 다운로드를 위한 인터넷 연결과 저장 공간이 필요합니다. ECAPA 화자 지문 모델이나 등록 파일도 사용하지 않습니다. Ollama 설치·실행은 필요하지 않습니다.
 
 기존 분리·등록 코드를 나중에 재사용할 수 있도록 SpeechBrain·PyTorch 의존성과 기존 모델 파일은 보존했습니다. 기본 입력 경로는 해당 라이브러리를 직접 가져오지 않습니다.
 
@@ -25,7 +25,7 @@ $env:OPENAI_MODEL = "gpt-5.4-mini"
 
 행동 계획 모델은 `gpt-5.4-mini`이며 `OPENAI_MODEL`은 생략할 수 있습니다. 분류 모델은 Decisions 전용 `gpt-6-luna`로 고정되어 있습니다. OpenAI SDK는 `3.26` 이상 `4` 미만이 필요하며, 현재 프로젝트 가상환경에는 `3.35.1`을 설치했습니다. 이미지 입력과 구조화된 응답을 지원하는 모델을 사용하세요. 위 설정은 현재 PowerShell 세션에 적용됩니다. `.env` 파일을 자동으로 읽지는 않습니다. 기존 `OLLAMA_HOST`, `OLLAMA_MODEL`은 사용하지 않습니다.
 
-분류기는 공식 OpenAI 엔드포인트의 `/decisions`, 계획기는 `/responses`를 사용합니다. 기본 주소는 `https://api.openai.com/v1`입니다. Decisions에는 전사 텍스트만 보내고, 구체적 명령의 계획 생성 때만 텍스트와 `--assist`의 JPEG 한 장을 보냅니다. 비어 있지 않은 발화는 Decisions 사용료가 발생합니다. 일반 대화에서 줄어드는 것은 추가 Responses 호출이며, 전체 비용 감소율은 발화 구성에 따라 달라집니다. 원본 마이크 오디오는 API로 보내지 않습니다. Responses 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
+분류기는 공식 OpenAI 엔드포인트의 `/decisions`, 계획기는 `/responses`를 사용합니다. 기본 주소는 `https://api.openai.com/v1`입니다. Decisions에는 전사 텍스트만 보내고, 구체적 명령의 계획 생성 때만 텍스트와 `--assist`의 JPEG 한 장을 보냅니다. 비어 있지 않은 발화는 Decisions 사용료가 발생합니다. 일반 대화에서 줄어드는 것은 추가 Responses 호출이며, 전체 비용 감소율은 발화 구성에 따라 달라집니다. 기본 로컬 전사에서는 마이크 오디오를 API로 보내지 않습니다. `--stt-backend openai`를 명시하면 발화 오디오를 OpenAI 전사 API로 보내며 별도 사용료가 발생합니다. Responses 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
 
 ## 실행
 
@@ -94,7 +94,7 @@ logs/
 ```
 
 - `.log`: 시각·출력 종류와 함께 안내문, 전사, 분류, 계획, 경고, 오류를 기록합니다.
-- `.jsonl`: 한 줄당 JSON 하나로 입력, 분류의 원본 선택지·확률·확신도, 계획 API 응답, 최종 결과, 각 API의 토큰 사용량과 소요 시간, 화면 출력을 기록합니다.
+- `.jsonl`: 한 줄당 JSON 하나로 입력, 분류의 원본 선택지·확률·확신도, 계획 API 응답, 최종 결과, 각 API의 토큰 사용량과 소요 시간, 화면 출력을 기록합니다. 마이크 음량·클리핑, 발화 감지 결과, 전사 구간별 품질 점수·거절 사유·처리 시간도 포함합니다.
 - 시각은 한국 시간 `+09:00`이고, 요청별 `command_id`로 입력·분류·계획·결과를 연결합니다.
 - 실행마다 새 파일을 만들고 즉시 flush합니다. 자동 삭제하거나 덮어쓰지 않습니다.
 - API 키는 로그에서 가립니다. 원본 오디오·JPEG·이미지 base64는 로그에 저장하지 않습니다.
@@ -107,7 +107,27 @@ logs/
 .\.venv\Scripts\python.exe .\main.py
 ```
 
-화자 등록과 API 키 없이 마이크 음성을 직접 발화 감지·전사해 출력합니다. 이 모드는 AI에 명령을 보내지 않습니다. `run_live_transcription`의 사용자 콜백도 사용할 수 있습니다.
+기본 로컬 전사는 화자 등록과 API 키 없이 마이크 음성을 Silero로 감지·전사해 출력합니다. 이 모드는 AI에 명령을 보내지 않습니다. `run_live_transcription`의 사용자 콜백도 사용할 수 있습니다.
+
+### 음성 인식 설정 및 진단
+
+```powershell
+# 마이크 장치 번호 확인 (녹음 없음)
+.\.venv\Scripts\python.exe .\main.py --list-mics
+
+# 5초 진단: 음량·클리핑만 기록하며 원본 파일은 저장하지 않음
+.\.venv\Scripts\python.exe .\main.py --diagnose-mic --input-device 1
+
+# 마이크 선택 및 음량 표시 후 실행
+.\.venv\Scripts\python.exe .\main.py --assist --input-device 1 --show-levels
+
+# 로컬 전사 탐색 크기 변경
+.\.venv\Scripts\python.exe .\main.py --stt-beam 5 --input-device 1
+```
+
+장치 번호는 `--list-mics` 결과에 맞게 바꾸세요. 전사 점수가 낮거나 무음으로 판단되거나 반복이 심하면 “잘 듣지 못했습니다. 구체적인 명령을 다시 말해 주세요.”를 출력하고 Decisions에 전달하지 않습니다. 이 품질 기준은 초기 경험값이며 실제 정답 확률을 보장하지 않습니다.
+
+[음성 인식 설정·모델 비교 안내](SPEECH_GUIDE.md)에 모델 선택, 선택적 API 전사, 평가용 녹음 및 동일 음성 비교 방법을 정리했습니다. 설정 비교 보고서는 `reports/`에, 음량·발화·전사 품질은 기존 `logs/`에 기록합니다.
 
 ### 손 모양 인식
 
@@ -122,7 +142,7 @@ logs/
 
 수정 전 파일은 `backups/before_api_20261018_105455/`에 보관했습니다. Python 소스, Arduino 스케치, 의존성 목록, README, 기존 순서도와 `.gitignore`가 포함됩니다. `manifest.json`의 SHA-256으로 원본을 확인할 수 있습니다. 대용량 모델과 가상환경은 복제하지 않았고 기존 파일을 그대로 유지합니다.
 
-명령행의 `--enroll`은 비활성화했습니다. 등록·식별 및 SepFormer 함수는 나중에 재사용할 수 있도록 라이브러리에 남겨두었고, 일반 실행 및 통합 모드에서는 호출하지 않습니다. 직접 마이크 입력으로 전환하기 직전의 API 버전은 `backups/before_direct_mic_20261018_110826/`에 추가로 백업했습니다. 해당 `manifest.json`에 원본 SHA-256을 기록했습니다. Decisions·로그 적용 직전 버전은 `backups/before_decisions_20261018_113345/`에 별도로 보관했습니다.
+명령행의 `--enroll`은 비활성화했습니다. 등록·식별 및 SepFormer 함수는 나중에 재사용할 수 있도록 라이브러리에 남겨두었고, 일반 실행 및 통합 모드에서는 호출하지 않습니다. 직접 마이크 입력으로 전환하기 직전의 API 버전은 `backups/before_direct_mic_20261018_110826/`에 추가로 백업했습니다. 해당 `manifest.json`에 원본 SHA-256을 기록했습니다. Decisions·로그 적용 직전 버전은 `backups/before_decisions_20261018_113345/`에 별도로 보관했습니다. Silero·음성 품질 개선 직전 버전은 `backups/before_stt_quality_20261018_115215/`에 보관했습니다.
 
 기존 두 스트림 분리·화자 식별 방식을 명시적으로 다시 사용하려면 다음과 같이 실행할 수 있습니다. 이 경로에는 기존 CPU 분리 지연이 다시 발생할 수 있습니다.
 
@@ -138,7 +158,9 @@ run_separated_transcription(identify_speakers=True)
 ## 구성 및 동작 메모
 
 - `main.py`: 음성 전사, 통합 API 계획, 텍스트 API 계획, 손 모양 인식의 진입점.
-- `module/speech.py`: 16 kHz 모노 입력을 직접 발화 감지 및 한국어 전사로 전달. 기존 분리 경로는 명시적 재사용용으로 보존.
+- `module/speech.py`: 16 kHz 모노 입력을 Silero 발화 감지 및 한국어 전사로 전달. 기존 분리 경로는 명시적 재사용용으로 보존.
+- `module/speech_quality.py`: 입력 장치·음량 진단, Silero 스트리밍 확률, 전사 설정·품질 검사, 선택적 API 전사.
+- `module/speech_evaluation.py`: 동일 녹음의 설정별 비교와 문자 오류·핵심 명령 조건 평가.
 - `module/vision_assistant.py`: 모든 화자의 명령과 최신 JPEG를 묶어 순서대로 처리.
 - `module/action_planner.py`: OpenAI Responses 호출 및 계획 응답 검증.
 - `module/decision_router.py`: Decisions 분류, 고정 안내, 필요한 경우에만 계획 API 호출.
@@ -147,7 +169,7 @@ run_separated_transcription(identify_speakers=True)
 - `sketch_oct17a/sketch_oct17a.ino`: 별도로 실행되는 PCA9685 서보 중앙 신호 설정.
 - `FLOWCHART.md`: 변경된 구조의 순서도.
 
-마이크 입력을 기본 1024샘플 블록(16 kHz에서 약 64ms)으로 받아 0.7초 침묵으로 발화 종료를 판단합니다. 유효 음성이 0.25초보다 짧은 구간은 버립니다. 20초 이상의 발화는 내부 전사 조각으로 나눠도 최종 콜백은 한 번 전달합니다. 전사는 별도 작업자에서 처리하며 Ctrl+C 시 수집된 입력과 끝나지 않은 발화를 마무리합니다.
+마이크 입력을 기본 1024샘플 블록(16 kHz에서 약 64ms)으로 받아 0.7초 침묵으로 발화 종료를 판단합니다. Silero 음성 확률로 감지한 구간이 기본 0.12초보다 짧으면 버리며 `--speech-min-duration`으로 조절할 수 있습니다. 20초 이상의 발화는 내부 전사 조각으로 나눠도 최종 콜백은 한 번 전달합니다. 전사는 별도 작업자에서 처리하며 Ctrl+C 시 수집된 입력과 끝나지 않은 발화를 마무리합니다. 긴 발화의 어느 한 조각이라도 품질 검사를 통과하지 못하면 나머지만 명령으로 보내지 않고 발화 전체를 보류합니다.
 
 SepFormer 병목은 제거했지만 Whisper 전사나 API 응답이 느리면 대기할 수 있습니다. 대기열은 입력을 자동으로 버리지 않습니다. 실제 응답 속도는 CPU와 발화 길이에 따라 달라집니다.
 
