@@ -272,10 +272,10 @@ def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions 
             camera.start()
         except RuntimeError as exc:
             print(f"카메라 준비 실패: {exc}", file=sys.stderr, flush=True)
-            print("영상 없이 발화를 분류합니다. 영상이 필요한 행동 계획은 생성하지 않습니다.", flush=True)
+            print("영상 없이 일반 대화와 정지를 처리합니다. 장면 질문과 영상이 필요한 행동 계획은 안내만 출력합니다.", flush=True)
         assistant.start()
         print(f"음성·영상 AI 준비 완료: {model} / 화자 등록 없이 모든 음성을 처리합니다.", flush=True)
-        print("Decisions에는 텍스트만 전송하며 구체적인 행동 명령만 사진과 함께 계획 API로 보냅니다.", flush=True)
+        print("Decisions에는 텍스트만 전송합니다. 일반 대화는 텍스트로 답하고 장면 질문·행동 명령에만 사진을 전달합니다.", flush=True)
         speech_kwargs = {}
         if options is not None:
             speech_kwargs["options"] = options

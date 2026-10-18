@@ -1,6 +1,6 @@
 # ROBOTPAL 음성·영상 API 행동 계획
 
-화자 등록 없이 마이크 음성을 한국어로 전사하고, OpenAI Decisions로 먼저 발화를 분류합니다. 구체적인 이동·회전 명령만 기존 Responses API로 보내 상위 행동 계획을 생성합니다. 일반 대화·정보 부족·미지원 요청은 정해진 안내문을 출력합니다. 명확한 정지는 고정된 정지 계획을 출력합니다. 실행 중 화면 출력·오류와 분류·계획·API 사용량을 로그에 보관합니다. 실제 로봇 제어로 연결되지는 않습니다.
+화자 등록 없이 마이크 음성을 한국어로 전사하고, OpenAI Decisions로 먼저 발화를 분류합니다. 구체적인 이동·회전 명령만 기존 Responses API로 보내 상위 행동 계획을 생성합니다. 일반 대화에는 AI가 짧게 답하며, 장면 질문에만 접수 당시 JPEG를 함께 보냅니다. 정보 부족·미지원 요청은 정해진 안내문을 출력합니다. 명확한 정지는 고정된 정지 계획을 출력합니다. 실행 중 화면 출력·오류와 분류·계획·API 사용량을 로그에 보관합니다. 실제 로봇 제어로 연결되지는 않습니다.
 
 ## 설치
 
@@ -23,9 +23,9 @@ $env:OPENAI_API_KEY = "본인의_API_키"
 $env:OPENAI_MODEL = "gpt-5.4-mini"
 ```
 
-행동 계획 모델은 `gpt-5.4-mini`이며 `OPENAI_MODEL`은 생략할 수 있습니다. 분류 모델은 Decisions 전용 `gpt-6-luna`로 고정되어 있습니다. OpenAI SDK는 `3.26` 이상 `4` 미만이 필요하며, 현재 프로젝트 가상환경에는 `3.35.1`을 설치했습니다. 이미지 입력과 구조화된 응답을 지원하는 모델을 사용하세요. 위 설정은 현재 PowerShell 세션에 적용됩니다. `.env` 파일을 자동으로 읽지는 않습니다. 기존 `OLLAMA_HOST`, `OLLAMA_MODEL`은 사용하지 않습니다.
+행동 계획·대화 답변의 기본 모델은 `gpt-6-luna`이며 `OPENAI_MODEL`은 생략할 수 있습니다. 분류 모델은 Decisions 전용 `gpt-6-luna`로 고정되어 있습니다. OpenAI SDK는 `3.26` 이상 `4` 미만이 필요하며, 현재 프로젝트 가상환경에는 `3.35.1`을 설치했습니다. 이미지 입력과 구조화된 응답을 지원하는 모델을 사용하세요. 위 설정은 현재 PowerShell 세션에 적용됩니다. `.env` 파일을 자동으로 읽지는 않습니다. 기존 `OLLAMA_HOST`, `OLLAMA_MODEL`은 사용하지 않습니다.
 
-분류기는 공식 OpenAI 엔드포인트의 `/decisions`, 계획기는 `/responses`를 사용합니다. 기본 주소는 `https://api.openai.com/v1`입니다. Decisions에는 전사 텍스트만 보내고, 구체적 명령의 계획 생성 때만 텍스트와 `--assist`의 JPEG 한 장을 보냅니다. 품질 검사를 통과해 최종 분류로 전달된 발화는 Decisions 사용료가 발생합니다. 임시 인식은 Decisions로 보내지 않습니다. 일반 대화에서 줄어드는 것은 추가 Responses 호출이며, 전체 비용 감소율은 발화 구성에 따라 달라집니다. 기본 로컬 전사에서는 마이크 오디오를 API로 보내지 않습니다. `--stt-backend openai`를 명시하면 발화 오디오를 OpenAI 전사 API로 보내며 별도 사용료가 발생합니다. Responses 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
+분류기는 공식 OpenAI 엔드포인트의 `/decisions`, 계획기와 대화 답변기는 `/responses`를 사용합니다. 기본 주소는 `https://api.openai.com/v1`입니다. Decisions에는 전사 텍스트만 보내고, 일반 대화는 텍스트만, 장면 질문과 구체적 명령은 텍스트와 `--assist`에서 선택한 JPEG 한 장을 보냅니다. 품질 검사를 통과해 최종 분류로 전달된 발화는 Decisions 사용료가 발생합니다. 임시 인식은 Decisions로 보내지 않습니다. 일반 대화·장면 질문에는 Decisions 이후 Responses 1회가 추가됩니다. 정보 부족·미지원·불확실 입력과 정지에는 추가 Responses 호출이 없습니다. 기본 로컬 전사에서는 마이크 오디오를 API로 보내지 않습니다. `--stt-backend openai`를 명시하면 발화 오디오를 OpenAI 전사 API로 보내며 별도 사용료가 발생합니다. Responses 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
 
 ## 실행
 
@@ -42,7 +42,7 @@ $env:OPENAI_MODEL = "gpt-5.4-mini"
 
 카메라 작업자는 최신 프레임 하나를 메모리에 유지합니다. 전사 완료 콜백에서 프레임을 JPEG로 복사하고 명령과 함께 FIFO 큐에 저장합니다. 각 명령은 접수 당시 이미지를 유지하며 반복 발화도 별도로 처리합니다. 화자 이름·음성 지문은 API 요청에 포함하지 않습니다.
 
-카메라에 오류가 있거나 프레임이 없거나 갱신된 지 1초가 넘으면 이미지가 없는 상태로 텍스트 분류만 수행합니다. 카메라가 시작되지 않아도 일반 대화 안내와 정지 계획은 처리할 수 있습니다. 구체적인 행동 요청인데 접수 당시 영상이 없으면 고정 오류를 출력하고 계획 API를 호출하지 않습니다. API 인증·모델 접근·요청 제한·응답 형식 오류를 표시하고 다음 발화를 계속 처리합니다. Decisions 요청 제한 시간은 20초, Responses 요청은 120초이며 자동 재시도는 없습니다. 분류 실패 시 Responses로 우회하지 않습니다. 처리 속도보다 발화가 많으면 대기가 늘어날 수 있습니다.
+카메라에 오류가 있거나 프레임이 없거나 갱신된 지 1초가 넘으면 이미지가 없는 상태로 텍스트 분류만 수행합니다. 카메라가 시작되지 않아도 일반 대화 답변과 정지 계획은 처리할 수 있습니다. 장면 질문인데 영상이 없으면 고정 안내를 출력하고 답변 API를 호출하지 않습니다. 구체적인 행동 요청인데 접수 당시 영상이 없으면 고정 오류를 출력하고 계획 API를 호출하지 않습니다. API 인증·모델 접근·요청 제한·응답 형식 오류를 표시하고 다음 발화를 계속 처리합니다. Decisions 요청 제한 시간은 20초, 행동 계획 요청은 120초, 대화 답변 요청은 30초이며 자동 재시도는 없습니다. 분류 실패 시 Responses로 우회하지 않습니다. 처리 속도보다 발화가 많으면 대기가 늘어날 수 있습니다.
 
 Ctrl+C 시 남은 음성 처리를 마치고, 카메라를 종료한 뒤 이미 접수된 AI 명령을 순서대로 처리하고 종료합니다. 최종 전사 접수 시 선택한 JPEG 한 장은 실행 로그와 함께 저장합니다. 연속 영상·원본 음성은 저장하지 않습니다.
 
@@ -55,7 +55,7 @@ Ctrl+C 시 남은 음성 처리를 마치고, 카메라를 종료한 뒤 이미 
 .\.venv\Scripts\python.exe .\main.py --plan
 ```
 
-`main.py --plan`과 `ai_action_planner.py`도 Decisions 분류 후 필요한 경우에만 계획을 생성합니다. Python 코드에서는 다음의 고수준 함수를 사용하면 분류와 로그를 함께 적용할 수 있습니다.
+`main.py --plan`과 `ai_action_planner.py`도 Decisions 분류 후 대화 답변 또는 행동 계획을 생성합니다. 텍스트 진입점은 카메라를 열지 않으므로 장면 질문에는 영상 없음 안내를 출력합니다. Python 코드에서는 다음의 고수준 함수를 사용하면 분류와 로그를 함께 적용할 수 있습니다.
 
 ```python
 from module.decision_router import process_command, print_command_result
@@ -66,20 +66,24 @@ with capture_output():
     print_command_result(result)
 ```
 
-`CommandResult`에는 `decision`, 선택적인 `plan`, 고정 안내문인 `message`가 있습니다. 저수준 `module.action_planner.create_action_plan`은 분류를 생략하는 기존 계획 함수로 유지합니다. 비용 절감 경로를 쓰려면 `process_command`를 사용하세요.
+`CommandResult`에는 `decision`, 선택적인 `plan`, 고정 안내 또는 AI 답변인 `message`가 있습니다. 저수준 `module.action_planner.create_action_plan`은 분류를 생략하는 기존 계획 함수로 유지합니다. 비용 절감 경로를 쓰려면 `process_command`를 사용하세요.
 
 ### 분류 결과별 처리
 
-고정 문구는 `module/decision_router.py`의 `FIXED_MESSAGES`에서 수정할 수 있습니다. 문구 생성용 API나 음성 합성은 호출하지 않으며 콘솔에 출력합니다.
+고정 문구는 `module/decision_router.py`의 `FIXED_MESSAGES`에서 수정할 수 있습니다. 일반 대화·장면 질문은 별도 대화 프롬프트로 Responses를 호출해 `[AI 답변]`으로 출력합니다. 음성 합성은 호출하지 않습니다.
 
-| 분류 | 동작 및 고정 출력 |
+| 분류 | 동작 및 출력 |
 |---|---|
 | `concrete_command` | 방향·종료 조건이 명확한 이동·회전 명령만 Responses로 전달 |
 | `stop_command` | 별도 Responses 호출 없이 정해진 정지 계획 출력 |
+| `conversation` | 인사·감사·일반 지식·기능 질문에 텍스트만으로 짧게 답변 |
+| `visual_question` | 접수 당시 JPEG 한 장과 질문으로 답변. 영상이 없으면 고정 안내 |
 | `not_command` | 구체적인 로봇 명령이 아니어서 행동 계획을 생성하지 않습니다. |
 | `needs_details` | 이동 거리나 시간, 회전 각도 등 구체적인 행동 조건을 알려주세요. |
 | `unsupported` | 현재 지원하지 않는 행동입니다. 이동·회전·정지 명령을 사용해 주세요. |
 | `uncertain` | 명령을 명확히 이해하지 못했습니다. 구체적으로 다시 말해 주세요. |
+
+대화는 이전 문맥 없이 발화별 독립 답변이며 한국어 존댓말 1~3문장을 기본으로 요청합니다. `store=False`, 최대 출력 1,024토큰, 30초 제한, 자동 재시도 0회이며 웹 검색·도구·대화 기록은 전달하지 않습니다. 일반 대화에서는 저장된 이미지가 있어도 보내지 않습니다. 이미지 필요 여부는 같은 Decisions 요청에서 분류합니다. 행동 요청이 섞이면 행동 분류가 우선하며 미지원 행동을 대화로 우회하지 않습니다. 인증·시간 초과·빈 응답·미완료·거절은 고정 안내 후 다음 발화를 처리합니다.
 
 분류 확신도가 0.8 미만이거나 모델이 판단을 거절하면 불확실 안내를 출력합니다. 이 값은 프로젝트에서 선택한 초기 기준이며 실제 한국어 발화로 정확도를 검증한 값은 아닙니다. `멈추지 마`, 질문·인용, 복합 명령도 구분하도록 분류 지침을 제공합니다. 실제 정확도는 모델 판단과 전사 정확도에 영향을 받습니다. 정지 계획은 접수 순서대로 출력하며 실제 하드웨어 정지나 긴급 정지를 구현하지 않습니다.
 
@@ -94,11 +98,11 @@ logs/
 ```
 
 - `.log`: 시각·출력 종류와 함께 안내문, 전사, 분류, 계획, 경고, 오류를 기록합니다.
-- `.jsonl`: 한 줄당 JSON 하나로 입력, 분류의 원본 선택지·확률·확신도, 계획 API 응답, 최종 결과, 각 API의 토큰 사용량과 소요 시간, 화면 출력을 기록합니다. 마이크 음량·클리핑, 발화 감지 결과, 전사 구간별 품질 점수·거절 사유·처리 시간도 포함합니다.
-- 시각은 한국 시간 `+09:00`이고, 요청별 `command_id`로 입력·분류·계획·결과를 연결합니다.
+- `.jsonl`: 한 줄당 JSON 하나로 입력, 분류의 원본 선택지·확률·확신도, 계획·대화 API 응답, 최종 결과, 각 API의 토큰 사용량과 소요 시간, 화면 출력을 기록합니다. 마이크 음량·클리핑, 발화 감지 결과, 전사 구간별 품질 점수·거절 사유·처리 시간도 포함합니다.
+- 시각은 한국 시간 `+09:00`이고, 요청별 `command_id`로 입력·분류·계획·대화 답변·결과를 연결합니다. `conversation_request`, `conversation_response`, `conversation_error`와 최종 결과의 `image_sent`로 실제 이미지 전송 여부를 저장 여부와 구분합니다.
 - 실행마다 새 파일을 만들고 즉시 flush합니다. 자동 삭제하거나 덮어쓰지 않습니다.
 - API 키는 로그에서 가립니다. 원본 오디오·이미지 base64는 텍스트 로그에 저장하지 않습니다.
-- `--assist`에서 최종 전사마다 선택한 JPEG를 `logs/<실행 이름>_images/`에 저장합니다. JSONL의 `voice_command_received.image_path`와 `command_image_saved` 이벤트를 통해 같은 `command_id`의 발화·AI 결과와 연결됩니다. 경로는 JSONL 파일이 있는 폴더 기준입니다. 저장된 바이트는 행동 계획 API에 전달하는 JPEG와 같습니다. 일반 대화로 분류된 발화의 이미지도 저장하며, 카메라 이미지가 없으면 `image_path`는 null입니다. 이미지 저장 실패는 오류로 기록하고 음성·AI 처리는 계속합니다. 이미지 선택 시점은 발화 시작이 아닌 최종 전사 완료 시점입니다.
+- `--assist`에서 최종 전사마다 선택한 JPEG를 `logs/<실행 이름>_images/`에 저장합니다. JSONL의 `voice_command_received.image_path`와 `command_image_saved` 이벤트를 통해 같은 `command_id`의 발화·AI 결과와 연결됩니다. 경로는 JSONL 파일이 있는 폴더 기준입니다. 저장된 바이트는 장면 질문 또는 행동 계획 API에 전달하는 JPEG와 같습니다. 일반 대화로 분류된 발화의 이미지도 저장하며, 카메라 이미지가 없으면 `image_path`는 null입니다. 이미지 저장 실패는 오류로 기록하고 음성·AI 처리는 계속합니다. 이미지 선택 시점은 발화 시작이 아닌 최종 전사 완료 시점입니다.
 - 로그에는 전사 내용이 남습니다. `logs/`는 Git에서 제외했습니다.
 - 라이브러리를 별도로 호출하는 프로그램에서는 위 예시처럼 `capture_output()`으로 감싸야 출력 기록이 활성화됩니다. 다른 프로세스나 장치 펌웨어의 출력은 이 Python 로그에 포함되지 않습니다.
 
@@ -205,3 +209,5 @@ SepFormer 병목은 제거했지만 Whisper 전사나 API 응답이 느리면 �
 API 모델·입력 형식 참고: [모델 문서](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [구조화된 응답](https://developers.openai.com/api/docs/guides/structured-outputs), [이미지 입력](https://developers.openai.com/api/docs/guides/images-vision).
 
 Decisions API 참고: [공식 안내](https://developers.openai.com/api/docs/guides/decisions), [Python API 명세](https://developers.openai.com/api/reference/python/resources/decisions/methods/create).
+
+일반 대화 답변 추가 직전 소스·테스트·문서는 `backups/before_conversation_20261018_141740/`에 SHA-256 manifest와 함께 보관했습니다.
