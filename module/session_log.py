@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,7 @@ class SessionLog:
         name = datetime.now(KST).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
         self.console_path = root / f"{name}.log"
         self.events_path = root / f"{name}.jsonl"
+        self.images_path = root / f"{name}_images"
         self._console = self.console_path.open("x", encoding="utf-8")
         try:
             self._events = self.events_path.open("x", encoding="utf-8")
@@ -60,6 +62,19 @@ class SessionLog:
         if isinstance(value, (list, tuple)):
             return [self._redact(v) for v in value]
         return value
+
+    def save_image(self, jpeg: bytes, *, command_id: str, captured_at: float) -> str:
+        """Persist the exact JPEG selected for a final transcription."""
+        with self._lock:
+            self.images_path.mkdir(parents=True, exist_ok=True)
+            path = self.images_path / f"{uuid.uuid4().hex}.jpg"
+            with path.open("xb") as output:
+                output.write(jpeg)
+            relative_path = path.relative_to(self.events_path.parent).as_posix()
+            self.event("command_image_saved", command_id=command_id,
+                       image_path=relative_path, captured_at=captured_at,
+                       bytes=len(jpeg), sha256=hashlib.sha256(jpeg).hexdigest())
+            return relative_path
 
     def event(self, event: str, **data: Any) -> None:
         with self._lock:
@@ -118,6 +133,13 @@ class _Tee:
 def record_event(event: str, **data: Any) -> None:
     if _active is not None:
         _active.event(event, **data)
+
+
+def save_command_image(jpeg: bytes, *, command_id: str, captured_at: float) -> str | None:
+    """Save an image only when a run has an active log session."""
+    if _active is None:
+        return None
+    return _active.save_image(jpeg, command_id=command_id, captured_at=captured_at)
 
 
 @contextlib.contextmanager

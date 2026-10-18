@@ -18,7 +18,7 @@ from .action_planner import (
 )
 from .speech import run_live_transcription
 from .decision_router import classify_command, process_command, print_command_result
-from .session_log import record_event
+from .session_log import record_event, save_command_image
 from .speech_quality import SpeechOptions
 
 CAMERA_WIDTH = 640
@@ -209,10 +209,20 @@ class VoiceVisionAssistant:
                 return
             command = VoiceCommand(self._next_number, speaker, text.strip(), snapshot, uuid.uuid4().hex)
             self._next_number += 1
+            image_path = None
+            if snapshot is not None:
+                try:
+                    image_path = save_command_image(snapshot.jpeg, command_id=command.command_id,
+                                                    captured_at=snapshot.captured_at)
+                except OSError as exc:
+                    record_event("command_image_save_error", command_id=command.command_id,
+                                 error_type=type(exc).__name__, error=str(exc))
+                    print(f"[명령 {command.number}] 이미지 로그 저장 실패: {exc}", file=sys.stderr, flush=True)
             print(f"[명령 {command.number} / {speaker}] 최종 인식 접수: {command.text}", flush=True)
             record_event("voice_command_received", number=command.number, speaker=speaker,
                          command_id=command.command_id,
                          text=command.text, has_image=snapshot is not None,
+                         image_path=image_path,
                          captured_at=snapshot.captured_at if snapshot is not None else None)
             self._commands.put(command)
 

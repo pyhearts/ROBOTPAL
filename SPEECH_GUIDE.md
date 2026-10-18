@@ -148,6 +148,6 @@ Silero ONNX 모델은 faster-whisper에 포함된 파일을 사용하므로 별�
 
 `gpt-transcribe`에 한국어 및 용어 힌트와 메모리에서 만든 WAV를 전달합니다. 외부 VAD로 음성 구간을 고른 후 호출하며, 파일은 디스크에 임시 저장하지 않습니다. 전사 API 사용료와 음성 전송이 발생합니다. 기본은 로컬이고, 로컬 실패 시 자동 API 재시도도 없습니다. API 평가에서는 중복 과금을 막기 위해 한 번에 한 조합만 허용합니다.
 
-API 응답의 전사·사용량도 로그에 남기지만 로컬 Whisper의 log probability·무음 확률과 같은 품질 점수를 제공한다고 가정하지 않습니다. API 요청 제한 시간은 60초이고 자동 재시도는 없습니다. 원본 오디오와 이미지 데이터는 로그에 기록하지 않습니다.
+API 응답의 전사·사용량도 로그에 남기지만 로컬 Whisper의 log probability·무음 확률과 같은 품질 점수를 제공한다고 가정하지 않습니다. API 요청 제한 시간은 60초이고 자동 재시도는 없습니다. 원본 오디오는 로그에 기록하지 않습니다. --assist에서 선택한 이미지는 logs/<실행 이름>_images/에 JPEG로 저장하고 JSONL의 image_path로 연결합니다. 이미지 선택은 최종 전사 완료 시점입니다.
 
 공식 자료: [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [Silero 코드](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/vad.py), [OpenAI 전사 API](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create).

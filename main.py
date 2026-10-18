@@ -1,5 +1,6 @@
 """ROBOTPAL speech, gesture, and OpenAI voice/vision entry point."""
 #.\.venv\Scripts\python.exe .\main.py --assist
+#$env:OPENAI_API_KEY = [Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "User")
 
 from __future__ import annotations
 
