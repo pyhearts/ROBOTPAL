@@ -55,13 +55,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stt-beam", type=int, default=3, help="로컬 탐색 크기 1~10 (기본 3)")
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero 음성 확률 기준 (기본 0.5)")
     parser.add_argument("--speech-pre-roll", type=float, default=0.4, help="시작 전 보존 시간, 초")
-    parser.add_argument("--speech-silence", type=float, default=0.7, help="발화 종료 침묵 시간, 초")
+    parser.add_argument("--speech-silence", type=float, default=0.45, help="발화 종료 침묵 시간, 초 (기본 0.45)")
     parser.add_argument("--speech-min-duration", type=float, default=0.12, help="최소 음성 시간, 초")
     parser.add_argument("--whisper-vad", action="store_true", help="Whisper 내부 VAD도 함께 적용해 비교합니다.")
     parser.add_argument("--show-levels", action="store_true", help="매초 마이크 음량을 표시합니다.")
     parser.add_argument("--stt-offline", action="store_true", help="로컬에 준비된 Whisper 모델만 사용합니다.")
     parser.add_argument("--stt-min-logprob", type=float, default=-1.2, help="전사 품질 최소 평균 logprob")
     parser.add_argument("--stt-max-no-speech", type=float, default=0.7, help="허용할 최대 무음 확률")
+    parser.add_argument("--no-live-preview", action="store_true", help="임시 전사 없이 최종 전사만 수행합니다.")
+    parser.add_argument("--preview-interval", type=float, default=1.0, help="임시 전사 요청 간격, 초 (기본 1)")
+    parser.add_argument("--preview-window", type=float, default=4.0, help="임시 전사의 최근 음성 길이, 초 (기본 4)")
+    parser.add_argument("--stt-max-tokens", type=int, default=256, help="로컬 전사 최대 출력 토큰 32~256")
     parser.add_argument("--sample-seconds", type=float, default=5, help="진단·평가 녹음 길이 1~30초")
     parser.add_argument("--compare-models", help="비교할 로컬 모델 목록 (예: small,medium)")
     parser.add_argument("--compare-beams", help="비교할 beam 목록 (기본: 1,3,5)")
@@ -93,7 +97,8 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
         parser.error("--camera는 0 이상의 정수여야 합니다.")
     stt_flags = {"--stt-backend", "--stt-model", "--stt-device", "--stt-compute", "--stt-beam",
                  "--vad-threshold", "--speech-pre-roll", "--speech-silence", "--speech-min-duration",
-                 "--whisper-vad", "--show-levels", "--stt-offline", "--stt-min-logprob", "--stt-max-no-speech"}
+                 "--whisper-vad", "--show-levels", "--stt-offline", "--stt-min-logprob", "--stt-max-no-speech",
+                 "--no-live-preview", "--preview-interval", "--preview-window", "--stt-max-tokens"}
     if supplied_flags & stt_flags and (args.plan or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample):
         parser.error("전사 설정은 기본 음성 모드, --assist, --compare-stt에서만 사용합니다.")
     if "--input-device" in supplied_flags and (args.plan or args.gesture or args.list_mics or args.compare_stt):
@@ -108,7 +113,9 @@ def _run_main(argv: Sequence[str] | None = None) -> int:
             beam_size=args.stt_beam, vad_threshold=args.vad_threshold, pre_roll=args.speech_pre_roll,
             silence=args.speech_silence, min_speech=args.speech_min_duration,
             internal_vad=args.whisper_vad, show_levels=args.show_levels,
-            min_logprob=args.stt_min_logprob, max_no_speech=args.stt_max_no_speech)
+            min_logprob=args.stt_min_logprob, max_no_speech=args.stt_max_no_speech,
+            live_preview=not args.no_live_preview, preview_interval=args.preview_interval,
+            preview_window=args.preview_window, max_output_tokens=args.stt_max_tokens)
         speech_kwargs = {}
         if supplied_flags & (stt_flags | {"--input-device"}):
             speech_kwargs["options"] = options

@@ -209,7 +209,7 @@ class VoiceVisionAssistant:
                 return
             command = VoiceCommand(self._next_number, speaker, text.strip(), snapshot, uuid.uuid4().hex)
             self._next_number += 1
-            print(f"[명령 {command.number} / {speaker}] 접수: {command.text}", flush=True)
+            print(f"[명령 {command.number} / {speaker}] 최종 인식 접수: {command.text}", flush=True)
             record_event("voice_command_received", number=command.number, speaker=speaker,
                          command_id=command.command_id,
                          text=command.text, has_image=snapshot is not None,

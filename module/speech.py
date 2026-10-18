@@ -20,6 +20,7 @@ from .session_log import record_event
 from .speech_quality import (SpeechOptions, SileroProbability, SpeechTranscriber,
                              TranscriptionResult, InputMeter, RETRY_MESSAGE,
                              prepare_microphone, options_dict)
+from .live_transcription import LiveTranscriptionQueue, PreviewTask
 
 SAMPLE_RATE = 16_000
 WINDOW_SECONDS = 4.0
@@ -409,7 +410,7 @@ class MonoUtteranceDetector:
     """Detect utterances directly in mono microphone blocks, without separation."""
 
     def __init__(self, sample_rate: int = SAMPLE_RATE, *, probability: Any = None,
-                 options: SpeechOptions | None = None) -> None:
+                 options: SpeechOptions | None = None, status_updates: bool = False) -> None:
         self.sample_rate = sample_rate
         self.options = options or (SpeechOptions() if probability is not None else None)
         if probability is not None and sample_rate != SAMPLE_RATE:
@@ -421,6 +422,9 @@ class MonoUtteranceDetector:
         self.last_end_time: float | None = None
         self.pending = np.empty(0, dtype=np.float32)
         self.pending_start: float | None = None
+        self.status_updates = status_updates
+        self._preview_id: str | None = None
+        self._preview_at = -math.inf
 
     def process(self, mono: np.ndarray, start_time: float) -> list[TranscriptionTask]:
         mono = np.asarray(mono, dtype=np.float32)
@@ -461,7 +465,13 @@ class MonoUtteranceDetector:
             self.pending = self.pending[512:]
             self.last_end_time = self.pending_start + 512 / self.sample_rate
             score = self.probability(frame)
+            was_active = self.state.active
             emitted = self.state.feed(frame, self.last_end_time, voiced=score >= self.options.vad_threshold)
+            if self.status_updates and not was_active and self.state.active:
+                print("[음성 감지] 듣고 있습니다...", flush=True)
+                record_event("speech_started", utterance_id=self.state.utterance_id)
+            if self.status_updates and any(task.final for task in emitted):
+                print("[전사 중] 발화가 끝나 최종 문장을 확인합니다...", flush=True)
             tasks.extend(emitted)
             for task in emitted:
                 record_event("vad_utterance_chunk", utterance_id=task.utterance_id, final=task.final,
@@ -470,6 +480,21 @@ class MonoUtteranceDetector:
                              speech_end_time=task.speech_end_time, detected_at=task.end_time)
             self.pending_start = self.last_end_time
         return tasks
+
+    def preview_snapshot(self) -> PreviewTask | None:
+        """Copy only at the preview interval; a preview never creates a final task."""
+        if self.options is None or not self.state.active or self.last_end_time is None:
+            return None
+        if self._preview_id != self.state.utterance_id:
+            self._preview_id, self._preview_at = self.state.utterance_id, -math.inf
+        if (self.state.speech_samples < round(0.4 * self.sample_rate)
+                or self.state.buffered_samples < round(0.8 * self.sample_rate)
+                or self.state.silence_samples > round(0.128 * self.sample_rate)
+                or self.last_end_time - self._preview_at < self.options.preview_interval):
+            return None
+        self._preview_at = self.last_end_time
+        samples = self.state._audio()[-round(self.options.preview_window * self.sample_rate):].copy()
+        return PreviewTask(self.state.utterance_id, samples, self.last_end_time)
 
 
 class PerStreamUtteranceDetector:
@@ -538,7 +563,7 @@ _STOP = object()
 
 
 def handle_transcription(speaker: str, text: str) -> None:
-    print(f"[{speaker}] {text}", flush=True)
+    print(f"[최종 인식 / {speaker}] {text}", flush=True)
 
 
 def transcribe_utterance(model: object, audio: np.ndarray) -> str:
@@ -681,11 +706,30 @@ def enroll_speakers() -> None:
 def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier | None, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None]) -> None:
     partial_text: dict[str, list[str]] = {}
     rejected: set[str] = set()
+    last_preview: tuple[str, str] | None = None
     while True:
         task = tasks.get()
         try:
             if task is _STOP:
                 return
+            if isinstance(task, PreviewTask):
+                if not isinstance(whisper, SpeechTranscriber) or not tasks.preview_is_current(task):
+                    continue
+                try:
+                    result = whisper.transcribe_audio(task.audio, preview=True)
+                    if result.accepted and tasks.preview_is_current(task):
+                        key = (task.utterance_id, result.text)
+                        if key != last_preview:
+                            print(f"[임시 인식] {result.text}", flush=True)
+                            record_event("stt_preview_displayed", utterance_id=task.utterance_id,
+                                         text=result.text, audio_end_time=task.end_time)
+                            last_preview = key
+                    else:
+                        record_event("stt_preview_discarded", utterance_id=task.utterance_id,
+                                     reason=result.reason or "final_or_new_utterance_arrived")
+                except Exception as exc:
+                    record_event("stt_preview_error", error_type=type(exc).__name__)
+                continue
             assert isinstance(task, TranscriptionTask)
             started = time.monotonic()
             try:
@@ -834,11 +878,12 @@ def run_live_transcription(
     options = options or SpeechOptions()
     prepare_microphone(sd, options.input_device)
     probability = SileroProbability()
-    detector = MonoUtteranceDetector(probability=probability, options=options)
+    detector = MonoUtteranceDetector(probability=probability, options=options, status_updates=True)
     whisper = create_speech_transcriber(options, offline=offline, WhisperModel=WhisperModel)
     meter = InputMeter()
     captured: queue.Queue[tuple[np.ndarray, float, str]] = queue.Queue()
-    transcript_tasks: queue.Queue[TranscriptionTask | object] = queue.Queue()
+    preview_enabled = options.live_preview and options.backend == "local"
+    transcript_tasks = LiveTranscriptionQueue(_STOP) if preview_enabled else queue.Queue()
     transcript_thread = threading.Thread(
         target=_transcription_worker,
         args=(whisper, None, transcript_tasks, on_transcription),
@@ -859,9 +904,16 @@ def run_live_transcription(
         meter.update(audio, show=options.show_levels)
         for task in detector.process(audio, start_time):
             transcript_tasks.put(task)
+        if preview_enabled:
+            transcript_tasks.activate(detector.state.utterance_id if detector.state.active else None)
+            preview = detector.preview_snapshot()
+            if preview is not None:
+                transcript_tasks.offer_preview(preview)
 
     transcript_thread.start()
     print("직접 마이크 입력 모드: Silero 음성 감지 후 전사합니다 (SepFormer 미사용).")
+    if preview_enabled:
+        print("임시 인식은 화면과 로그에 표시합니다. 최종 확인된 문장만 명령으로 전달합니다.")
     print("마이크를 듣고 있습니다. 종료하려면 Ctrl+C를 누르세요.")
     interrupted = False
     try:

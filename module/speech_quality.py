@@ -29,13 +29,17 @@ class SpeechOptions:
     backend: str = "local"
     vad_threshold: float = 0.5
     pre_roll: float = 0.4
-    silence: float = 0.7
+    silence: float = 0.45
     min_speech: float = 0.12
     internal_vad: bool = False
     min_logprob: float = -1.2
     max_no_speech: float = 0.7
     vocabulary: str = VOCABULARY
     show_levels: bool = False
+    live_preview: bool = True
+    preview_interval: float = 1.0
+    preview_window: float = 4.0
+    max_output_tokens: int = 256
 
     def __post_init__(self) -> None:
         if self.input_device is not None and self.input_device < 0:
@@ -49,11 +53,15 @@ class SpeechOptions:
         if not 0.2 <= self.silence <= 3 or not 0.03 <= self.min_speech <= 1:
             raise ValueError("종료 침묵은 0.2~3초, 최소 음성은 0.03~1초여야 합니다.")
         numbers = [self.vad_threshold, self.pre_roll, self.silence, self.min_speech,
-                   self.min_logprob, self.max_no_speech]
+                   self.min_logprob, self.max_no_speech, self.preview_interval, self.preview_window]
         if not all(math.isfinite(value) for value in numbers):
             raise ValueError("음성 설정에는 유한한 수치를 사용해 주세요.")
         if not -10 <= self.min_logprob < 0 or not 0 < self.max_no_speech <= 1:
             raise ValueError("전사 품질 기준값의 범위를 확인해 주세요.")
+        if not 0.5 <= self.preview_interval <= 5 or not 1 <= self.preview_window <= 8:
+            raise ValueError("임시 전사 간격은 0.5~5초, 창 길이는 1~8초여야 합니다.")
+        if not 32 <= self.max_output_tokens <= 256:
+            raise ValueError("최대 전사 출력 토큰은 32~256이어야 합니다.")
 
 
 class SileroProbability:
@@ -212,39 +220,49 @@ class SpeechTranscriber:
         self.model, self.options, self.client = model, options, client
         self.last_result: TranscriptionResult | None = None
 
-    def transcribe_audio(self, audio: np.ndarray) -> TranscriptionResult:
+    def transcribe_audio(self, audio: np.ndarray, *, preview: bool = False) -> TranscriptionResult:
         self.last_result = None
         started = time.monotonic()
         metrics: dict[str, Any] = audio_metrics(audio)
+        if preview and self.options.backend != "local":
+            raise ValueError("임시 전사는 추가 API 호출 없이 로컬에서만 수행합니다.")
         try:
             if not np.all(np.isfinite(audio)) or metrics["peak"] == 0:
                 self.last_result = TranscriptionResult("", False, "invalid_or_silent_audio", metrics)
-                record_event("stt_result", text="", accepted=False, reason=self.last_result.reason,
+                record_event("stt_preview_result" if preview else "stt_result", text="", accepted=False, reason=self.last_result.reason,
                              backend=self.options.backend, model=self.options.model, **metrics)
                 return self.last_result
             if self.options.backend == "openai":
                 text = self._api(audio)
                 quality: list[dict[str, Any]] = []
             else:
+                token_budget = min(40 if preview else self.options.max_output_tokens,
+                                   max(24 if preview else 32, math.ceil(metrics["duration"] * 12) + 16))
                 segments, info = self.model.transcribe(
-                    audio, language="ko", beam_size=self.options.beam_size,
+                    audio, language="ko", beam_size=1 if preview else self.options.beam_size,
                     vad_filter=self.options.internal_vad, temperature=0,
                     condition_on_previous_text=False, hotwords=self.options.vocabulary,
+                    max_new_tokens=token_budget, repetition_penalty=1.1,
+                    no_repeat_ngram_size=6, without_timestamps=True,
                 )
-                segments = list(segments)  # faster-whisper inference runs on iteration.
+                segments = list(segments)  # One bounded decoding window for each <=20s chunk.
                 text = " ".join(segment.text.strip() for segment in segments).strip()
                 quality = [{"text": segment.text, "start": segment.start, "end": segment.end,
                             "avg_logprob": segment.avg_logprob, "no_speech_prob": segment.no_speech_prob,
                             "compression_ratio": segment.compression_ratio} for segment in segments]
                 metrics["language_probability"] = getattr(info, "language_probability", None)
+                metrics["token_budget"] = token_budget
+                metrics["generated_tokens"] = sum(len(getattr(segment, "tokens", [])) for segment in segments)
             metrics["segments"] = quality
             reason = self._quality_reason(text, quality, metrics)
+            if metrics.get("generated_tokens", 0) >= metrics.get("token_budget", math.inf) - 2:
+                reason = "output_token_limit"
             metrics["transcription_seconds"] = time.monotonic() - started
             metrics["realtime_factor"] = metrics["transcription_seconds"] / max(metrics["duration"], 0.001)
             self.last_result = TranscriptionResult(text, not reason, reason, metrics)
-            record_event("stt_result", text=text, accepted=not reason, reason=reason,
+            record_event("stt_preview_result" if preview else "stt_result", text=text, accepted=not reason, reason=reason,
                          backend=self.options.backend, model="gpt-transcribe" if self.options.backend == "openai" else self.options.model,
-                         beam_size=self.options.beam_size, **metrics)
+                         beam_size=1 if preview else self.options.beam_size, **metrics)
             return self.last_result
         except Exception as exc:
             record_event("stt_error", error_type=type(exc).__name__, backend=self.options.backend,

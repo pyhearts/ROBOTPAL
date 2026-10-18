@@ -121,7 +121,7 @@ class DirectRuntimeTests(unittest.TestCase):
                 patch.object(speech.queue, "Queue", side_effect=[captured, jobs]), \
                 patch.object(speech, "transcribe_utterance", side_effect=transcribe), \
                 contextlib.redirect_stdout(output):
-            speech.run_live_transcription(lambda *args: received.append(args))
+            speech.run_live_transcription(lambda *args: received.append(args), options=speech.SpeechOptions(live_preview=False))
         self.assertEqual(received, [("음성 입력", "명령"), ("음성 입력", "명령")])
         self.assertEqual(len(transcribed), 2)
         self.assertTrue(np.any(transcribed[0] == np.float32(0.1)))
@@ -146,7 +146,7 @@ class DirectRuntimeTests(unittest.TestCase):
                 patch.object(speech, "_load_whisper_model", return_value=object()), \
                 patch.object(speech, "transcribe_utterance", return_value="멈춰"), \
                 contextlib.redirect_stdout(io.StringIO()):
-            speech.run_live_transcription(lambda *args: received.append(args))
+            speech.run_live_transcription(lambda *args: received.append(args), options=speech.SpeechOptions(live_preview=False))
         self.assertEqual(received, [("음성 입력", "멈춰")])
 
     def test_failed_microphone_open_closes_transcription_worker(self):
@@ -157,7 +157,7 @@ class DirectRuntimeTests(unittest.TestCase):
                 patch.object(speech.queue, "Queue", side_effect=[queue.Queue(), jobs]), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, "마이크"):
-                speech.run_live_transcription()
+                speech.run_live_transcription(options=speech.SpeechOptions(live_preview=False))
         self.assertEqual(jobs.unfinished_tasks, 0)
 
 
