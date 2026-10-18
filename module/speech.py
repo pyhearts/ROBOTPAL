@@ -1,4 +1,4 @@
-"""Overlapping-speech transcription with speaker registration disabled by default."""
+"""Direct microphone VAD and transcription, with legacy separation kept for reuse."""
 
 from __future__ import annotations
 
@@ -309,9 +309,10 @@ class TranscriptionTask:
 
 
 class _StreamState:
-    def __init__(self, stream_id: int, sample_rate: int) -> None:
+    def __init__(self, stream_id: int, sample_rate: int, *, collect_identity: bool = True) -> None:
         self.stream_id = stream_id
         self.sample_rate = sample_rate
+        self.collect_identity = collect_identity
         self.pre_roll: deque[np.ndarray] = deque(maxlen=max(1, round(PRE_ROLL_SECONDS * sample_rate / VAD_BLOCK_SAMPLES)))
         self.active = False
         self.parts: list[np.ndarray] = []
@@ -358,7 +359,7 @@ class _StreamState:
                 self.silence_samples = 0
             else:
                 self.silence_samples += len(block)
-        if voiced and self.identity_samples < 8 * self.sample_rate:
+        if self.collect_identity and voiced and self.identity_samples < 8 * self.sample_rate:
             remaining = 8 * self.sample_rate - self.identity_samples
             kept = block[:remaining].copy()
             self.identity_parts.append(kept)
@@ -380,6 +381,31 @@ class _StreamState:
         task = TranscriptionTask(self.utterance_id, self.stream_id, self._audio(), True, end_time, self._identity_audio())
         self._clear()
         return [task]
+
+
+class MonoUtteranceDetector:
+    """Detect utterances directly in mono microphone blocks, without separation."""
+
+    def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
+        self.sample_rate = sample_rate
+        self.state = _StreamState(-1, sample_rate, collect_identity=False)
+        self.last_end_time: float | None = None
+
+    def process(self, mono: np.ndarray, start_time: float) -> list[TranscriptionTask]:
+        mono = np.asarray(mono, dtype=np.float32)
+        if mono.ndim != 1:
+            raise ValueError("모노 마이크 오디오가 필요합니다.")
+        tasks: list[TranscriptionTask] = []
+        for offset in range(0, len(mono), VAD_BLOCK_SAMPLES):
+            block_end = min(offset + VAD_BLOCK_SAMPLES, len(mono))
+            self.last_end_time = start_time + block_end / self.sample_rate
+            tasks.extend(self.state.feed(mono[offset:block_end], self.last_end_time))
+        return tasks
+
+    def flush(self) -> list[TranscriptionTask]:
+        if self.last_end_time is None:
+            return []
+        return self.state.flush(self.last_end_time)
 
 
 class PerStreamUtteranceDetector:
@@ -495,6 +521,7 @@ class SepformerAdapter:
 
 
 def _load_runtime_dependencies():
+    """Legacy separation/enrollment dependencies; unused by direct mic input."""
     try:
         import sounddevice as sd
         import torch
@@ -608,7 +635,7 @@ def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifi
                         speaker = (
                             identifier.identify(task.identity_audio)
                             if identifier is not None
-                            else f"음성 스트림 {task.stream_id + 1}"
+                            else ("음성 입력" if task.stream_id < 0 else f"음성 스트림 {task.stream_id + 1}")
                         )
                     except Exception as exc:
                         print(f"화자 식별에 실패해 기타로 처리합니다: {exc}", file=sys.stderr)
@@ -650,20 +677,19 @@ def load_speaker_profiles() -> list[SpeakerProfile]:
         raise RuntimeError(f"화자 등록 파일이 없거나 손상되었습니다: {exc}. 지문을 다시 등록하거나 identify_speakers=False를 사용해 주세요.") from exc
 
 
-def run_live_transcription(
-    on_transcription: Callable[[str, str], None] = handle_transcription,
-    *,
-    offline: bool = False,
-    identify_speakers: bool = False,
-) -> None:
-    """Transcribe all voices without enrollment; identification is opt-in for reuse."""
-    profiles = load_speaker_profiles() if identify_speakers else None
-    sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy = _load_runtime_dependencies()
-    print("음성 분리 모델을 준비합니다. 화자 등록 없이 모든 음성을 처리합니다." if not identify_speakers else "음성 분리 모델과 화자 지문 모델을 준비합니다.")
-    embedder, separate = _load_voice_models(
-        torch, SepformerSeparation, SpeakerRecognition, LocalStrategy,
-        offline=offline, identify_speakers=identify_speakers
-    )
+def _load_transcription_dependencies():
+    """Import only the packages needed for direct microphone transcription."""
+    try:
+        import sounddevice as sd
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError(
+            f"필요한 패키지({exc.name or '필수 패키지'})가 없습니다. requirements.txt를 설치해 주세요."
+        ) from exc
+    return sd, WhisperModel
+
+
+def _load_whisper_model(WhisperModel, *, offline: bool = False):
     print(f"한국어 Whisper 모델({WHISPER_MODEL_NAME})을 준비합니다.")
     try:
         whisper_source = WHISPER_MODEL_NAME
@@ -674,7 +700,7 @@ def run_live_transcription(
             # Whisper otherwise falls back to an online tokenizer even with local weights.
             if not (Path(whisper_source) / "tokenizer.json").is_file():
                 raise RuntimeError("로컬 Whisper tokenizer.json이 없습니다.")
-        whisper = WhisperModel(
+        return WhisperModel(
             whisper_source, device="cpu", compute_type="int8", local_files_only=offline
         )
     except Exception as exc:
@@ -684,6 +710,104 @@ def run_live_transcription(
                 f"기본 음성 전사 모드(main.py)를 한 번 실행해 주세요. 상세 정보: {exc}"
             ) from exc
         raise RuntimeError(f"Whisper 모델을 준비하지 못했습니다: {exc}") from exc
+
+
+def run_live_transcription(
+    on_transcription: Callable[[str, str], None] = handle_transcription,
+    *,
+    offline: bool = False,
+    identify_speakers: bool = False,
+) -> None:
+    """Pass mono mic audio straight to VAD and Whisper without SepFormer.
+
+    Explicit legacy identification remains available for library callers only.
+    """
+    if identify_speakers:
+        run_separated_transcription(on_transcription, offline=offline, identify_speakers=True)
+        return
+    sd, WhisperModel = _load_transcription_dependencies()
+    whisper = _load_whisper_model(WhisperModel, offline=offline)
+    detector = MonoUtteranceDetector()
+    captured: queue.Queue[tuple[np.ndarray, float]] = queue.Queue()
+    transcript_tasks: queue.Queue[TranscriptionTask | object] = queue.Queue()
+    transcript_thread = threading.Thread(
+        target=_transcription_worker,
+        args=(whisper, None, transcript_tasks, on_transcription),
+        name="speech-transcriber", daemon=True,
+    )
+
+    def capture_audio(indata, frames, time_info, status) -> None:
+        del frames, time_info
+        received_at = time.monotonic()
+        if status:
+            print(f"마이크 상태: {status}", file=sys.stderr)
+        audio = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
+        captured.put((audio, received_at - len(audio) / SAMPLE_RATE))
+
+    def process_block(item: tuple[np.ndarray, float]) -> None:
+        audio, start_time = item
+        for task in detector.process(audio, start_time):
+            transcript_tasks.put(task)
+
+    transcript_thread.start()
+    print("직접 마이크 입력 모드: 음성 분리 없이 발화 감지와 전사를 수행합니다.")
+    print("마이크를 듣고 있습니다. 종료하려면 Ctrl+C를 누르세요.")
+    interrupted = False
+    try:
+        with sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+            blocksize=BLOCK_SIZE, callback=capture_audio,
+        ):
+            while True:
+                item = captured.get()
+                try:
+                    process_block(item)
+                finally:
+                    captured.task_done()
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n마이크 입력을 종료하고 남은 발화를 처리합니다.")
+    except Exception as exc:
+        raise RuntimeError(
+            f"마이크 입력 처리에 실패했습니다. 기본 입력 장치와 마이크 권한을 확인해 주세요. 상세 정보: {exc}"
+        ) from exc
+    finally:
+        # InputStream is closed before draining, so callbacks cannot add more audio.
+        try:
+            while True:
+                try:
+                    item = captured.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    process_block(item)
+                finally:
+                    captured.task_done()
+            for task in detector.flush():
+                transcript_tasks.put(task)
+        finally:
+            transcript_tasks.put(_STOP)
+            transcript_tasks.join()
+            transcript_thread.join()
+        if interrupted:
+            print("음성 인식을 종료했습니다.")
+
+
+def run_separated_transcription(
+    on_transcription: Callable[[str, str], None] = handle_transcription,
+    *,
+    offline: bool = False,
+    identify_speakers: bool = False,
+) -> None:
+    """Legacy SepFormer path; never used by the default CLI or assistant."""
+    profiles = load_speaker_profiles() if identify_speakers else None
+    sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy = _load_runtime_dependencies()
+    print("음성 분리 모델을 준비합니다. 화자 등록 없이 모든 음성을 처리합니다." if not identify_speakers else "음성 분리 모델과 화자 지문 모델을 준비합니다.")
+    embedder, separate = _load_voice_models(
+        torch, SepformerSeparation, SpeakerRecognition, LocalStrategy,
+        offline=offline, identify_speakers=identify_speakers
+    )
+    whisper = _load_whisper_model(WhisperModel, offline=offline)
     started = time.perf_counter()
     separate(np.zeros(round(4.0 * SAMPLE_RATE), dtype=np.float32))
     elapsed = time.perf_counter() - started

@@ -199,7 +199,7 @@ class VoiceTests(unittest.TestCase):
     def test_default_start_never_reads_registration(self):
         # Stop before loading heavy runtime packages; profile loading must not occur.
         with patch.object(speech, "load_speaker_profiles") as profiles, \
-                patch.object(speech, "_load_runtime_dependencies", side_effect=RuntimeError("test stop")):
+                patch.object(speech, "_load_transcription_dependencies", side_effect=RuntimeError("test stop")):
             with self.assertRaisesRegex(RuntimeError, "test stop"):
                 speech.run_live_transcription()
         profiles.assert_not_called()

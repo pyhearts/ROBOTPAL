@@ -1,4 +1,5 @@
 """ROBOTPAL speech, gesture, and OpenAI voice/vision entry point."""
+#.\.venv\Scripts\python.exe .\main.py --assist
 
 from __future__ import annotations
 

@@ -10,7 +10,9 @@ Python 3.12 환경에서 실행합니다.
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-음성 분리는 로컬 SepFormer, 전사는 로컬 Whisper small을 사용합니다. 최초 실행에는 모델 다운로드를 위한 인터넷 연결과 저장 공간이 필요합니다. 기본 실행에서는 ECAPA 화자 지문 모델이나 등록 파일을 사용하지 않습니다. Ollama 설치·실행도 필요하지 않습니다.
+마이크의 16 kHz 모노 입력을 바로 RMS 기반 발화 감지와 로컬 Whisper small 전사로 전달합니다. 기본 전사 모드와 `--assist`에서는 SepFormer를 불러오거나 실행하지 않고, 4초 창 대기·분리 속도 측정·분리 대기열도 사용하지 않습니다. 최초 실행에는 Whisper 모델 다운로드를 위한 인터넷 연결과 저장 공간이 필요합니다. ECAPA 화자 지문 모델이나 등록 파일도 사용하지 않습니다. Ollama 설치·실행은 필요하지 않습니다.
+
+기존 분리·등록 코드를 나중에 재사용할 수 있도록 SpeechBrain·PyTorch 의존성과 기존 모델 파일은 보존했습니다. 기본 입력 경로는 해당 라이브러리를 직접 가져오지 않습니다.
 
 ## OpenAI API 설정
 
@@ -36,7 +38,7 @@ $env:OPENAI_MODEL = "gpt-5.4-mini"
 .\.venv\Scripts\python.exe .\main.py --assist --camera 1
 ```
 
-등록 여부와 관계없이 모든 비어 있지 않은 전사 결과를 명령으로 받습니다. 화자 이름 대신 `음성 스트림 1`, `음성 스트림 2`를 표시합니다. 이 번호는 분리 채널이며 특정 사람의 고정 신원이 아닙니다.
+등록 여부와 관계없이 모든 비어 있지 않은 전사 결과를 명령으로 받습니다. 출력 라벨은 `[음성 입력]`이며 화자를 나누거나 식별하지 않습니다. 여러 사람이 동시에 말하면 하나의 섞인 입력으로 전사되므로 한 번에 한 사람이 말하는 용도로 사용하세요.
 
 카메라 작업자는 최신 프레임 하나를 메모리에 유지합니다. 전사 완료 콜백에서 프레임을 JPEG로 복사하고 명령과 함께 FIFO 큐에 저장합니다. 각 명령은 접수 당시 이미지를 유지하며 반복 발화도 별도로 처리합니다. 화자 이름·음성 지문은 API 요청에 포함하지 않습니다.
 
@@ -61,7 +63,7 @@ Ctrl+C 시 남은 음성 처리를 마치고, 카메라를 종료한 뒤 이미 
 .\.venv\Scripts\python.exe .\main.py
 ```
 
-화자 등록과 API 키 없이 두 음성 스트림을 분리·전사해 출력합니다. 이 모드는 AI에 명령을 보내지 않습니다. `run_live_transcription`의 사용자 콜백도 사용할 수 있습니다.
+화자 등록과 API 키 없이 마이크 음성을 직접 발화 감지·전사해 출력합니다. 이 모드는 AI에 명령을 보내지 않습니다. `run_live_transcription`의 사용자 콜백도 사용할 수 있습니다.
 
 ### 손 모양 인식
 
@@ -76,13 +78,15 @@ Ctrl+C 시 남은 음성 처리를 마치고, 카메라를 종료한 뒤 이미 
 
 수정 전 파일은 `backups/before_api_20261018_105455/`에 보관했습니다. Python 소스, Arduino 스케치, 의존성 목록, README, 기존 순서도와 `.gitignore`가 포함됩니다. `manifest.json`의 SHA-256으로 원본을 확인할 수 있습니다. 대용량 모델과 가상환경은 복제하지 않았고 기존 파일을 그대로 유지합니다.
 
-명령행의 `--enroll`은 비활성화했습니다. 등록·식별 함수는 나중에 재사용할 수 있도록 라이브러리에 남겨두었고, 일반 실행 및 통합 모드에서는 호출하지 않습니다. 나중에 화자 식별만 다시 사용하려면 다음과 같이 명시적으로 등록하고 켤 수 있습니다.
+명령행의 `--enroll`은 비활성화했습니다. 등록·식별 및 SepFormer 함수는 나중에 재사용할 수 있도록 라이브러리에 남겨두었고, 일반 실행 및 통합 모드에서는 호출하지 않습니다. 직접 마이크 입력으로 전환하기 직전의 API 버전은 `backups/before_direct_mic_20261018_110826/`에 추가로 백업했습니다. 해당 `manifest.json`에 원본 SHA-256을 기록했습니다.
+
+기존 두 스트림 분리·화자 식별 방식을 명시적으로 다시 사용하려면 다음과 같이 실행할 수 있습니다. 이 경로에는 기존 CPU 분리 지연이 다시 발생할 수 있습니다.
 
 ```python
-from module.speech import enroll_speakers, run_live_transcription
+from module.speech import enroll_speakers, run_separated_transcription
 
 enroll_speakers()  # 필요할 때 별도로 한 번 실행
-run_live_transcription(identify_speakers=True)
+run_separated_transcription(identify_speakers=True)
 ```
 
 식별을 다시 켜는 것만으로 AI 명령 권한 제한이 복원되지는 않습니다. 이전의 등록자 전용 로컬 AI 방식 전체를 복원하려면 백업의 관련 Python 파일과 `requirements.txt`를 함께 복원해야 합니다. 복원 전에 현재 수정본도 별도로 보관하세요.
@@ -90,14 +94,16 @@ run_live_transcription(identify_speakers=True)
 ## 구성 및 동작 메모
 
 - `main.py`: 음성 전사, 통합 API 계획, 텍스트 API 계획, 손 모양 인식의 진입점.
-- `module/speech.py`: 16 kHz 모노 입력, 4초 분리 창·3초 이동·1초 중첩, 스트림별 발화 감지 및 한국어 전사.
+- `module/speech.py`: 16 kHz 모노 입력을 직접 발화 감지 및 한국어 전사로 전달. 기존 분리 경로는 명시적 재사용용으로 보존.
 - `module/vision_assistant.py`: 모든 화자의 명령과 최신 JPEG를 묶어 순서대로 처리.
 - `module/action_planner.py`: OpenAI API 호출 및 계획 응답 검증.
 - `module/gesture.py`, `module/gesture_rules.py`: 손 모양 인식과 숫자·OK 규칙.
 - `sketch_oct17a/sketch_oct17a.ino`: 별도로 실행되는 PCA9685 서보 중앙 신호 설정.
 - `FLOWCHART.md`: 변경된 구조의 순서도.
 
-각 음성 스트림은 0.7초 침묵으로 발화 종료를 판단합니다. 20초 이상의 발화는 내부 전사 조각으로 나눠도 최종 콜백은 한 번 전달합니다. 화자 지문을 쓰지 않는 기본 모드의 채널 연결은 중첩 파형 비교로 수행합니다. CPU 분리 속도가 3초 이동 간격을 따라가지 못하면 경고합니다.
+마이크 입력을 기본 1024샘플 블록(16 kHz에서 약 64ms)으로 받아 0.7초 침묵으로 발화 종료를 판단합니다. 유효 음성이 0.25초보다 짧은 구간은 버립니다. 20초 이상의 발화는 내부 전사 조각으로 나눠도 최종 콜백은 한 번 전달합니다. 전사는 별도 작업자에서 처리하며 Ctrl+C 시 수집된 입력과 끝나지 않은 발화를 마무리합니다.
+
+SepFormer 병목은 제거했지만 Whisper 전사나 API 응답이 느리면 대기할 수 있습니다. 대기열은 입력을 자동으로 버리지 않습니다. 실제 응답 속도는 CPU와 발화 길이에 따라 달라집니다.
 
 ## 검증
 

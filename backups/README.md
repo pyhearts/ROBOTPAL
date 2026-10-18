@@ -7,3 +7,7 @@
 전체 이전 방식으로 돌아가려면 해당 폴더의 `main.py`, `ai_action_planner.py`, `module/*.py`, `requirements.txt` 및 문서를 프로젝트의 같은 위치로 복사하고 의존성을 설치합니다. 현재 수정본을 먼저 따로 보관하세요. `.gitignore` 복원 시 새로 추가한 API 키 파일 제외 규칙은 유지하세요.
 
 화자 등록·식별만 재사용하는 방법은 현재 프로젝트의 `README.md`에 설명되어 있습니다.
+
+## 직접 마이크 입력 전환 직전 백업
+
+`before_direct_mic_20261018_110826/`는 OpenAI API를 사용하면서 SepFormer로 두 음성을 분리하던 버전입니다. `module`, `tests`, `main.py`, README, 순서도와 의존성 목록을 보관했습니다. `manifest.json`으로 SHA-256을 확인할 수 있습니다. 앞서 만든 원본 백업은 그대로 유지합니다.
