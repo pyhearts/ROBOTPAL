@@ -1,17 +1,15 @@
-"""Create Korean robot action plans with a local Ollama model."""
+"""Create Korean robot action plans with the OpenAI Responses API."""
 
 from __future__ import annotations
 
-import ipaddress
-import json
+import base64
 import os
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-DEFAULT_MODEL = "qwen3.5:4b"
-DEFAULT_HOST = "http://127.0.0.1:11434"
+DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_HOST = "https://api.openai.com/v1"
 REQUEST_TIMEOUT_SECONDS = 120.0
 
 PLANNER_INSTRUCTIONS = """
@@ -20,7 +18,7 @@ PLANNER_INSTRUCTIONS = """
 실제로 실행하지 않은 계획을 실행 순서대로 작성합니다.
 
 프로젝트와 기능의 범위:
-- 현재 Python 코드는 음성 전사·화자 식별과 손 모양 인식 결과를 콜백으로 전달합니다.
+- 현재 Python 코드는 화자 등록 없이 음성 전사와 손 모양 인식 결과를 콜백으로 전달합니다.
   행동 계획기는 텍스트 명령과 선택적으로 전사 완료 시점의 카메라 프레임 한 장을 받습니다.
   이미지는 명령 해석에 참고할 관측 자료이며 로봇의 현재 상태나 실행 결과가 아닙니다.
 - 이미지가 있으면 보이는 사람·물체·장면만 참고합니다. 이미지가 없으면 시각 정보를
@@ -97,6 +95,8 @@ class ActionPlan(BaseModel):
             if self.error:
                 raise ValueError("정상 계획에는 오류 메시지를 포함할 수 없습니다.")
         else:
+            if self.summary:
+                raise ValueError("유효하지 않은 명령에는 요약을 포함할 수 없습니다.")
             if self.steps:
                 raise ValueError("유효하지 않은 명령에는 행동 단계를 포함할 수 없습니다.")
             if not self.error:
@@ -109,58 +109,29 @@ class PlannerResponseError(RuntimeError):
 
 
 class PlannerConnectionError(RuntimeError):
-    """Raised when the local Ollama service or model is unavailable."""
+    """Raised when API configuration or the OpenAI service is unavailable."""
 
 
 def _invalid_plan(message: str) -> ActionPlan:
     return ActionPlan(status="invalid", summary="", steps=[], error=message)
 
 
-def _local_host() -> str:
-    """Pin requests to loopback, even if OLLAMA_HOST names another server."""
-    host = os.getenv("OLLAMA_HOST", "").strip() or DEFAULT_HOST
-    if "://" not in host:
-        host = "http://" + host
+def create_api_client() -> Any:
+    """Create an OpenAI client without logging or persisting credentials."""
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise PlannerConnectionError("OPENAI_API_KEY 환경 변수에 OpenAI API 키를 설정해 주세요.")
     try:
-        parsed = urlsplit(host)
-        hostname = parsed.hostname or ""
-        port = parsed.port or 11434
-        if hostname == "localhost":
-            hostname = "127.0.0.1"
-        if (
-            parsed.scheme != "http"
-            or not ipaddress.ip_address(hostname).is_loopback
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path not in ("", "/")
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError
-    except ValueError as exc:
-        raise PlannerConnectionError(
-            "OLLAMA_HOST는 이 컴퓨터의 HTTP 루프백 주소여야 합니다 "
-            "(예: http://127.0.0.1:11434)."
-        ) from exc
-    address = f"[{hostname}]" if ":" in hostname else hostname
-    return f"http://{address}:{port}"
-
-
-def create_local_client() -> Any:
-    """Load the optional SDK only when AI planning is requested."""
-    host = _local_host()
-    try:
-        from ollama import Client
+        from openai import OpenAI
     except ImportError as exc:
         raise PlannerConnectionError(
-            "Ollama Python 패키지가 없습니다. requirements.txt의 의존성을 설치해 주세요."
+            "OpenAI Python 패키지가 없습니다. requirements.txt의 의존성을 설치해 주세요."
         ) from exc
-    # Local data must not be routed through proxy environment variables or redirects.
-    return Client(
-        host=host,
+    return OpenAI(
+        api_key=key,
+        base_url=DEFAULT_HOST,
         timeout=REQUEST_TIMEOUT_SECONDS,
-        trust_env=False,
-        follow_redirects=False,
+        max_retries=0,
     )
 
 
@@ -168,37 +139,8 @@ def _value(value: Any, key: str, default: Any = None) -> Any:
     return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
 
 
-def _selected_model(model: str | None) -> str:
-    selected = (model or os.getenv("OLLAMA_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    if "cloud" in selected.lower() or "://" in selected or "@" in selected:
-        raise PlannerConnectionError("클라우드 모델은 사용할 수 없습니다. 로컬 모델을 선택해 주세요.")
-    return selected
-
-
-def check_local_model(
-    client: Any, *, model: str | None = None, require_vision: bool = False
-) -> str:
-    """Check installed weights and capabilities without downloading a model."""
-    selected = _selected_model(model)
-    try:
-        info = client.show(selected)
-    except Exception as exc:
-        raise PlannerConnectionError(_friendly_api_error(exc, model=selected)) from exc
-    # SDK versions may discard remote_* fields, so also require local weight metadata.
-    metadata = _value(info, "modelinfo") or _value(info, "model_info", {})
-    if (
-        _value(info, "remote_host")
-        or _value(info, "remote_model")
-        or not metadata.get("general.parameter_count")
-    ):
-        raise PlannerConnectionError(
-            "로컬 가중치가 확인되는 모델만 사용할 수 있습니다. "
-            "Ollama에서 로컬 모델을 준비하고 클라우드 기능을 꺼 주세요."
-        )
-    capabilities = _value(info, "capabilities") or []
-    if require_vision and "vision" not in capabilities:
-        raise PlannerConnectionError(f"{selected} 모델은 이미지 입력을 지원하지 않습니다.")
-    return selected
+def selected_model(model: str | None = None) -> str:
+    return (model or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
 
 def create_action_plan(
@@ -208,49 +150,56 @@ def create_action_plan(
     client: Any | None = None,
     model: str | None = None,
 ) -> ActionPlan:
-    """Plan from a command and optional encoded image bytes; never execute steps.
-
-    ``client`` is an injectable local Ollama client. No image path or URL is read.
-    """
+    """Send text and optional JPEG bytes to OpenAI; return a plan, never execute it."""
     normalized_command = command.strip()
     if not normalized_command:
         return _invalid_plan("명령이 비어 있습니다. 수행할 작업을 구체적으로 입력해 주세요.")
     if image is not None and (not isinstance(image, bytes) or not image):
-        raise ValueError("image에는 비어 있지 않은 이미지 바이트를 전달해 주세요.")
-
-    if client is None:
-        client = create_local_client()
-    selected = check_local_model(client, model=model, require_vision=image is not None)
-    schema = ActionPlan.model_json_schema()
-    user_message: dict[str, Any] = {"role": "user", "content": normalized_command}
+        raise ValueError("image에는 비어 있지 않은 JPEG 이미지 바이트를 전달해 주세요.")
+    owns_client = client is None
+    if owns_client:
+        client = create_api_client()
+    selected = selected_model(model)
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": normalized_command}]
     if image is not None:
-        user_message["images"] = [image]
+        encoded = base64.b64encode(image).decode("ascii")
+        content.append({
+            "type": "input_image",
+            "image_url": f"data:image/jpeg;base64,{encoded}",
+            "detail": "auto",
+        })
     try:
-        response = client.chat(
+        response = client.responses.create(
             model=selected,
-            messages=[
-                {
-                    "role": "system",
-                    "content": PLANNER_INSTRUCTIONS + "\n다음 스키마에 맞는 JSON 객체만 반환합니다:\n"
-                    + json.dumps(schema, ensure_ascii=False),
-                },
-                user_message,
-            ],
-            format=schema,
-            stream=False,
-            think=False,
-            options={"temperature": 0},
+            instructions=PLANNER_INSTRUCTIONS,
+            input=[{"role": "user", "content": content}],
+            text={"format": {
+                "type": "json_schema",
+                "name": "robot_action_plan",
+                "strict": True,
+                "schema": ActionPlan.model_json_schema(),
+            }},
+            store=False,
         )
     except Exception as exc:
         raise PlannerConnectionError(_friendly_api_error(exc, model=selected)) from exc
+    finally:
+        if owns_client:
+            client.close()
+    if _value(response, "status") != "completed":
+        raise PlannerResponseError("OpenAI 응답이 완료되지 않았습니다. 다시 시도해 주세요.")
+    for output in _value(response, "output", []) or []:
+        for part in _value(output, "content", []) or []:
+            if _value(part, "type") == "refusal":
+                return _invalid_plan("OpenAI가 이 요청의 계획 생성을 거절했습니다.")
     try:
-        content = _value(_value(response, "message"), "content")
-        if not isinstance(content, str) or not content.strip():
+        text = _value(response, "output_text")
+        if not isinstance(text, str) or not text.strip():
             raise ValueError("빈 응답")
-        return ActionPlan.model_validate_json(content)
+        return ActionPlan.model_validate_json(text)
     except (ValidationError, ValueError, TypeError) as exc:
         raise PlannerResponseError(
-            "로컬 AI 응답 형식이 올바르지 않습니다. 명령이나 모델을 확인해 주세요."
+            "OpenAI 응답 형식이 올바르지 않습니다. 명령이나 모델을 확인해 주세요."
         ) from exc
 
 
@@ -262,11 +211,20 @@ def print_action_plan(plan: ActionPlan) -> None:
 
 
 def _friendly_api_error(exc: Exception, *, model: str = DEFAULT_MODEL) -> str:
-    """Keep the legacy helper name while reporting local Ollama errors."""
-    if _value(exc, "status_code") == 404:
-        return f"로컬 모델 {model}을 찾을 수 없습니다. 실행 전에 ollama pull {model}로 준비해 주세요."
-    if isinstance(exc, ConnectionError) or "Connect" in type(exc).__name__:
-        return "Ollama에 연결하지 못했습니다. 이 컴퓨터에서 Ollama를 실행해 주세요."
+    """Report useful errors without echoing request data or credentials."""
+    status = _value(exc, "status_code")
+    if status == 401:
+        return "OpenAI API 인증에 실패했습니다. OPENAI_API_KEY를 확인해 주세요."
+    if status == 403:
+        return "OpenAI API 또는 선택한 모델에 대한 접근 권한이 없습니다."
+    if status == 404:
+        return f"OpenAI 모델 {model}을 사용할 수 없습니다. OPENAI_MODEL과 접근 권한을 확인해 주세요."
+    if status == 429:
+        return "OpenAI API 사용 한도 또는 요청 제한에 도달했습니다. 결제·사용량을 확인해 주세요."
+    if status == 400:
+        return "OpenAI가 요청을 거절했습니다. 모델의 이미지 입력·구조화된 응답 지원을 확인해 주세요."
     if "Timeout" in type(exc).__name__:
-        return "Ollama 응답 시간이 초과되었습니다. 모델과 사용 가능한 메모리를 확인해 주세요."
-    return f"Ollama 로컬 요청을 처리하지 못했습니다: {exc}"
+        return "OpenAI API 응답 시간이 초과되었습니다."
+    if isinstance(exc, ConnectionError) or "Connect" in type(exc).__name__:
+        return "OpenAI API에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요."
+    return "OpenAI API 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."

@@ -1,4 +1,4 @@
-"""ROBOTPAL speech, gesture, and local voice/vision AI entry point."""
+"""ROBOTPAL speech, gesture, and OpenAI voice/vision entry point."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from module.action_planner import (
     print_action_plan,
 )
 from module.gesture import RULE_SETS, handle_gesture, run_gesture_recognition
-from module.speech import enroll_speakers, handle_transcription, run_live_transcription
+from module.speech import handle_transcription, run_live_transcription
 from module.vision_assistant import run_voice_vision_assistant
 
 __all__ = [
@@ -30,10 +30,9 @@ __all__ = [
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--enroll", action="store_true", help="두 명의 화자를 새로 등록합니다.")
     mode.add_argument("--gesture", action="store_true", help="웹캠 손 모양 인식을 실행합니다.")
     mode.add_argument("--plan", action="store_true", help="텍스트 명령의 로봇 행동 계획을 생성합니다.")
-    mode.add_argument("--assist", action="store_true", help="등록 화자의 음성과 최신 카메라 영상을 로컬 AI로 처리합니다.")
+    mode.add_argument("--assist", action="store_true", help="모든 화자의 음성과 최신 카메라 영상을 OpenAI API로 처리합니다.")
     parser.add_argument("--command", help="--plan에 전달할 명령 (생략하면 입력을 요청합니다)")
     parser.add_argument("--camera", type=int, default=0, help="사용할 카메라 번호 (기본값: 0)")
     parser.add_argument("--preview", action="store_true", help="랜드마크 미리보기 창을 표시합니다.")
@@ -64,9 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.camera < 0:
         parser.error("--camera는 0 이상의 정수여야 합니다.")
     try:
-        if args.enroll:
-            enroll_speakers()
-        elif args.assist:
+        if args.assist:
             run_voice_vision_assistant(camera_index=args.camera)
         elif args.gesture:
             run_gesture_recognition(

@@ -1,4 +1,4 @@
-"""Overlapping-speech separation, speaker identification, and transcription."""
+"""Overlapping-speech transcription with speaker registration disabled by default."""
 
 from __future__ import annotations
 
@@ -510,33 +510,36 @@ def _load_runtime_dependencies():
     return sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy
 
 
-def _load_voice_models(torch, SepformerSeparation, SpeakerRecognition, LocalStrategy, *, offline=False):
+def _load_voice_models(torch, SepformerSeparation, SpeakerRecognition, LocalStrategy, *, offline=False, identify_speakers=False):
     try:
         fetch_options = {}
         if offline:
             from speechbrain.utils.fetching import FetchConfig
 
             fetch_options["fetch_config"] = FetchConfig(allow_network=False)
-        speaker_model = SpeakerRecognition.from_hparams(
-            source=SPEAKER_MODEL_NAME, savedir=str(MODEL_ROOT / "spkrec-ecapa-voxceleb"),
-            run_opts={"device": "cpu"}, local_strategy=LocalStrategy.COPY,
-            **fetch_options,
-        )
+        embedder = None
+        if identify_speakers:
+            speaker_model = SpeakerRecognition.from_hparams(
+                source=SPEAKER_MODEL_NAME, savedir=str(MODEL_ROOT / "spkrec-ecapa-voxceleb"),
+                run_opts={"device": "cpu"}, local_strategy=LocalStrategy.COPY,
+                **fetch_options,
+            )
+            embedder = EcapaEmbedder(speaker_model, torch)
         separator_model = SepformerSeparation.from_hparams(
             source=SEPARATION_MODEL_NAME, savedir=str(MODEL_ROOT / "sepformer-whamr16k"),
             run_opts={"device": "cpu"}, local_strategy=LocalStrategy.COPY,
             **fetch_options,
         )
-        return EcapaEmbedder(speaker_model, torch), SepformerAdapter(separator_model, torch)
+        return embedder, SepformerAdapter(separator_model, torch)
     except Exception as exc:
         if offline:
             raise RuntimeError(
-                "로컬 음성 분리 또는 화자 모델을 준비하지 못했습니다. "
+                "로컬 음성 모델을 준비하지 못했습니다. "
                 "인터넷을 사용할 수 있을 때 기본 음성 전사 모드(main.py)를 한 번 실행해 "
-                f"모델을 준비해 주세요. 통합 모드에서는 다운로드하지 않습니다. 상세 정보: {exc}"
+                f"모델을 준비해 주세요. offline=True에서는 다운로드하지 않습니다. 상세 정보: {exc}"
             ) from exc
         raise RuntimeError(
-            "음성 분리 또는 화자 지문 모델을 준비하지 못했습니다. 첫 실행에는 인터넷 연결과 "
+            "음성 모델을 준비하지 못했습니다. 첫 실행에는 인터넷 연결과 "
             f"모델 저장 공간이 필요합니다. 상세 정보: {exc}"
         ) from exc
 
@@ -581,7 +584,7 @@ def enroll_speakers() -> None:
     print(f"두 명의 화자 등록을 마쳤습니다: {PROFILE_PATH}")
 
 
-def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None]) -> None:
+def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifier | None, tasks: "queue.Queue[TranscriptionTask | object]", on_transcription: Callable[[str, str], None]) -> None:
     partial_text: dict[str, list[str]] = {}
     while True:
         task = tasks.get()
@@ -602,7 +605,11 @@ def _transcription_worker(whisper: object, identifier: RegisteredSpeakerIdentifi
                 partial_text.pop(task.utterance_id, None)
                 if complete:
                     try:
-                        speaker = identifier.identify(task.identity_audio)
+                        speaker = (
+                            identifier.identify(task.identity_audio)
+                            if identifier is not None
+                            else f"음성 스트림 {task.stream_id + 1}"
+                        )
                     except Exception as exc:
                         print(f"화자 식별에 실패해 기타로 처리합니다: {exc}", file=sys.stderr)
                         speaker = "기타"
@@ -634,25 +641,28 @@ def _separation_worker(separator: StreamingSeparator, captured: "queue.Queue[np.
 
 
 def load_speaker_profiles() -> list[SpeakerProfile]:
-    """Load the two registered profiles used for identification and AI authorization."""
+    """Legacy opt-in identification only; never used for AI authorization."""
     if not PROFILE_PATH.exists():
-        raise RuntimeError("등록된 화자 지문이 없습니다. 마이크 실행 전에 다음 명령을 실행해 주세요.\n.\\.venv\\Scripts\\python.exe .\\main.py --enroll")
+        raise RuntimeError("화자 식별을 명시적으로 켰지만 등록 지문이 없습니다. module.speech.enroll_speakers()로 등록하거나 identify_speakers=False를 사용해 주세요.")
     try:
         return ProfileStore.load(PROFILE_PATH, SPEAKER_MODEL_NAME)
     except ValueError as exc:
-        raise RuntimeError(f"화자 등록 파일이 없거나 손상되었습니다: {exc}\n.\\.venv\\Scripts\\python.exe .\\main.py --enroll") from exc
+        raise RuntimeError(f"화자 등록 파일이 없거나 손상되었습니다: {exc}. 지문을 다시 등록하거나 identify_speakers=False를 사용해 주세요.") from exc
 
 
 def run_live_transcription(
     on_transcription: Callable[[str, str], None] = handle_transcription,
     *,
     offline: bool = False,
+    identify_speakers: bool = False,
 ) -> None:
-    profiles = load_speaker_profiles()
+    """Transcribe all voices without enrollment; identification is opt-in for reuse."""
+    profiles = load_speaker_profiles() if identify_speakers else None
     sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy = _load_runtime_dependencies()
-    print("음성 분리 모델과 화자 지문 모델을 준비합니다.")
+    print("음성 분리 모델을 준비합니다. 화자 등록 없이 모든 음성을 처리합니다." if not identify_speakers else "음성 분리 모델과 화자 지문 모델을 준비합니다.")
     embedder, separate = _load_voice_models(
-        torch, SepformerSeparation, SpeakerRecognition, LocalStrategy, offline=offline
+        torch, SepformerSeparation, SpeakerRecognition, LocalStrategy,
+        offline=offline, identify_speakers=identify_speakers
     )
     print(f"한국어 Whisper 모델({WHISPER_MODEL_NAME})을 준비합니다.")
     try:
@@ -681,7 +691,7 @@ def run_live_transcription(
     if elapsed > HOP_SECONDS:
         print(f"경고: 분리 시간이 3초 이동 간격보다 길어 실시간 처리가 어렵습니다 ({elapsed:.2f}초).", file=sys.stderr)
 
-    identifier = RegisteredSpeakerIdentifier(profiles, embedder)
+    identifier = RegisteredSpeakerIdentifier(profiles, embedder) if profiles is not None else None
     detector = PerStreamUtteranceDetector()
     captured: "queue.Queue[np.ndarray | object]" = queue.Queue()
     separated: "queue.Queue[tuple[int, np.ndarray] | object]" = queue.Queue()

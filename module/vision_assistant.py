@@ -1,4 +1,4 @@
-"""Join registered-speaker commands with current camera frames for local AI."""
+"""Join all transcribed commands with current camera frames for the OpenAI API."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from typing import Any, Callable
 
 from .action_planner import (
     ActionPlan,
-    check_local_model,
     create_action_plan,
-    create_local_client,
+    create_api_client,
     print_action_plan,
+    selected_model,
 )
-from .speech import UNKNOWN_SPEAKER, load_speaker_profiles, run_live_transcription
+from .speech import run_live_transcription
 
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
@@ -163,16 +163,12 @@ class VoiceVisionAssistant:
     def __init__(
         self,
         camera: LatestFrameCamera,
-        speakers: set[str],
         *,
         client: Any = None,
         model: str | None = None,
         planner: Callable[..., ActionPlan] = create_action_plan,
     ) -> None:
-        if len(speakers) != 2 or UNKNOWN_SPEAKER in speakers:
-            raise ValueError("'기타'를 제외한 등록 화자 두 명이 필요합니다.")
         self._camera = camera
-        self._speakers = frozenset(speakers)
         self._client = client
         self._model = model
         self._planner = planner
@@ -192,7 +188,7 @@ class VoiceVisionAssistant:
             self._accepting = True
 
     def on_transcription(self, speaker: str, text: str) -> None:
-        if speaker not in self._speakers or not text.strip():
+        if not text.strip():
             return
         with self._lock:
             if not self._accepting:
@@ -218,7 +214,7 @@ class VoiceVisionAssistant:
                     return
                 assert isinstance(item, VoiceCommand)
                 try:
-                    print(f"[명령 {item.number} / {item.speaker}] 로컬 AI 처리 중...", flush=True)
+                    print(f"[명령 {item.number} / {item.speaker}] OpenAI API 처리 중...", flush=True)
                     plan = self._planner(
                         item.text, image=item.snapshot.jpeg, client=self._client, model=self._model
                     )
@@ -246,20 +242,22 @@ class VoiceVisionAssistant:
 
 
 def run_voice_vision_assistant(camera_index: int = 0) -> None:
-    """Run voice + camera locally until Ctrl+C; do not actuate the robot."""
-    profiles = load_speaker_profiles()
-    speakers = {profile.name for profile in profiles}
-    client = create_local_client()
-    model = check_local_model(client, require_vision=True)
+    """Accept every voice and send text + JPEG to OpenAI until Ctrl+C."""
+    client = create_api_client()
+    model = selected_model()
     camera = LatestFrameCamera(camera_index)
-    assistant = VoiceVisionAssistant(camera, speakers, client=client, model=model)
+    assistant = VoiceVisionAssistant(camera, client=client, model=model)
     try:
         camera.start()
         assistant.start()
-        print(f"음성·영상 AI 준비 완료: {model} / 허용 화자: {', '.join(sorted(speakers))}", flush=True)
-        run_live_transcription(on_transcription=assistant.on_transcription, offline=True)
+        print(f"음성·영상 AI 준비 완료: {model} / 화자 등록 없이 모든 음성을 처리합니다.", flush=True)
+        print("전사된 명령과 카메라 JPEG 한 장을 OpenAI API로 전송합니다.", flush=True)
+        run_live_transcription(on_transcription=assistant.on_transcription, identify_speakers=False)
     finally:
         try:
             camera.close()
         finally:
-            assistant.close()
+            try:
+                assistant.close()
+            finally:
+                client.close()

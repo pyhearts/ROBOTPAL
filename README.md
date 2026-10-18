@@ -1,129 +1,110 @@
-# ROBOTPAL 음성·영상 로봇 행동 계획
+# ROBOTPAL 음성·영상 API 행동 계획
 
-16 kHz 모노 마이크 입력을 최대 두 화자로 분리하고, 등록된 두 명 또는 `기타`로 식별해 발화가 끝날 때 한 번만 전달합니다.
+화자 등록 없이 모든 화자의 음성을 받아 한국어로 전사합니다. `--assist`에서는 전사된 명령과 최신 카메라 프레임 한 장을 OpenAI API로 보내 8족 로봇의 상위 행동 계획을 생성합니다. 생성된 계획은 출력하며 실제 로봇 제어로 연결되지는 않습니다.
 
-## 설치와 실행
+## 설치
 
-Python 3.12 가상환경에서 의존성을 설치합니다.
+Python 3.12 환경에서 실행합니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-최초 실행 또는 화자 변경 시 두 명을 등록합니다. 각 사람은 안내에 따라 약 8초간 말합니다. 원본 음성은 저장하지 않습니다.
+음성 분리는 로컬 SepFormer, 전사는 로컬 Whisper small을 사용합니다. 최초 실행에는 모델 다운로드를 위한 인터넷 연결과 저장 공간이 필요합니다. 기본 실행에서는 ECAPA 화자 지문 모델이나 등록 파일을 사용하지 않습니다. Ollama 설치·실행도 필요하지 않습니다.
+
+## OpenAI API 설정
+
+실행할 PowerShell 창에서 API 키를 환경 변수로 설정합니다. 아래 예시의 값을 본인의 키로 바꾸세요. 키를 코드나 채팅에 붙여 넣지 마세요.
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py --enroll
+$env:OPENAI_API_KEY = "본인의_API_키"
+$env:OPENAI_MODEL = "gpt-5.4-mini"
 ```
 
-이후 일반 실행은 다음과 같습니다.
+기본 모델은 `gpt-5.4-mini`이며 `OPENAI_MODEL`은 생략할 수 있습니다. 이미지 입력과 구조화된 응답을 지원하는 모델을 사용하세요. 위 설정은 현재 PowerShell 세션에 적용됩니다. `.env` 파일을 자동으로 읽지는 않습니다. 기존 `OLLAMA_HOST`, `OLLAMA_MODEL`은 사용하지 않습니다.
+
+행동 계획기는 공식 OpenAI 엔드포인트 `https://api.openai.com/v1`의 Responses API를 사용합니다. 텍스트 명령과 `--assist`의 JPEG 한 장이 OpenAI로 전송되며 API 사용료가 발생합니다. 원본 마이크 오디오는 API로 보내지 않습니다. 요청에는 `store=False`를 지정하며, 서비스의 별도 데이터 보관 정책까지 비활성화한다는 의미는 아닙니다.
+
+## 실행
+
+### 음성·영상으로 행동 계획 생성
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py --assist
+
+# 두 번째 카메라
+.\.venv\Scripts\python.exe .\main.py --assist --camera 1
+```
+
+등록 여부와 관계없이 모든 비어 있지 않은 전사 결과를 명령으로 받습니다. 화자 이름 대신 `음성 스트림 1`, `음성 스트림 2`를 표시합니다. 이 번호는 분리 채널이며 특정 사람의 고정 신원이 아닙니다.
+
+카메라 작업자는 최신 프레임 하나를 메모리에 유지합니다. 전사 완료 콜백에서 프레임을 JPEG로 복사하고 명령과 함께 FIFO 큐에 저장합니다. 각 명령은 접수 당시 이미지를 유지하며 반복 발화도 별도로 처리합니다. 화자 이름·음성 지문은 API 요청에 포함하지 않습니다.
+
+카메라에 오류가 있거나 프레임이 없거나 갱신된 지 1초가 넘으면 해당 명령은 보내지 않습니다. API 인증·모델 접근·요청 제한·응답 형식 오류를 표시하고 다음 명령을 계속 처리합니다. 요청별 제한 시간은 120초이고 자동 재시도는 끕니다. 처리 속도보다 명령이 많으면 대기가 늘어날 수 있습니다.
+
+Ctrl+C 시 남은 음성 처리를 마치고, 카메라를 종료한 뒤 이미 접수된 AI 명령을 순서대로 처리하고 종료합니다. 영상·JPEG·원본 음성 파일은 디스크에 저장하지 않습니다.
+
+### 텍스트로 행동 계획 생성
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py --plan --command "앞으로 30cm 이동해"
+
+# 대화형 입력
+.\.venv\Scripts\python.exe .\main.py --plan
+```
+
+`ai_action_planner.py`도 동일한 API 계획기를 사용합니다. Python에서는 `from module.action_planner import create_action_plan`으로 가져오며, `create_action_plan(command, image=jpeg_bytes)`로 JPEG를 함께 전달할 수 있습니다. 결과는 `status`, `summary`, `steps`, `error`가 있는 `ActionPlan`입니다.
+
+### 음성 전사만 실행
 
 ```powershell
 .\.venv\Scripts\python.exe .\main.py
 ```
 
-결과를 다른 기능에 연결하려면 `main`에서 `run_live_transcription`을 가져와 콜백을 전달하거나, 음성 기능만 사용할 때는 `module.speech`에서 직접 가져올 수 있습니다.
+화자 등록과 API 키 없이 두 음성 스트림을 분리·전사해 출력합니다. 이 모드는 AI에 명령을 보내지 않습니다. `run_live_transcription`의 사용자 콜백도 사용할 수 있습니다.
 
-## 손 모양 인식
-
-카메라 기능은 `main.py --gesture`로 실행합니다. 최초 실행에는 공식 MediaPipe 모델을 `models/gesture_recognizer.task`로 자동 다운로드하므로 인터넷 연결이 필요합니다.
+### 손 모양 인식
 
 ```powershell
-# 화면 없이 기본 카메라 사용
-.\.venv\Scripts\python.exe .\main.py --gesture
-
-# 손 관절과 현재 결과 미리보기
 .\.venv\Scripts\python.exe .\main.py --gesture --preview
-
-# 두 번째 카메라 사용
-.\.venv\Scripts\python.exe .\main.py --gesture --camera 1 --preview
-
-# 숫자 1~5와 OK 모양 우선 인식
 .\.venv\Scripts\python.exe .\main.py --gesture --rule-set numbers --preview
 ```
 
-지원하는 손 모양은 주먹(`Closed_Fist`), 손바닥(`Open_Palm`), 검지(`Pointing_Up`), 엄지 아래/위(`Thumb_Down`, `Thumb_Up`), 브이(`Victory`), 아이 러브 유(`ILoveYou`)입니다. 같은 모양이 약 0.4초 유지되면 한 번만 전달합니다. 로봇 기능과 연결하려면 `main` 또는 `module.gesture`에서 `run_gesture_recognition`을 가져와 콜백을 전달합니다.
+손 모양 인식은 별도 모드이며 AI 행동 계획과 자동으로 연결되지 않습니다. 기본 모드는 주먹·손바닥·검지·엄지 아래/위·브이·아이 러브 유를 인식합니다. 숫자 모드는 21개 관절로 숫자 1~5와 OK를 우선 판정합니다. 같은 결과가 400ms 유지되면 한 번 전달하며, 결과가 300ms 이상 사라지면 중복 방지 상태를 해제합니다. 미리보기에서는 Q 또는 Esc, 그 외에는 Ctrl+C로 종료합니다.
 
-`--rule-set numbers`에서는 21개 손 관절 좌표로 `Number_1`부터 `Number_5`, `OK`를 우선 판정합니다. 숫자 3은 검지·중지·약지 또는 엄지·검지·중지 조합을 모두 허용합니다. 규칙 결과의 confidence `1.0`은 학습 모델의 확률이 아니라 규칙에 명확히 일치했다는 뜻입니다. 숫자 모드에서 규칙이 불확실하면 `Pointing_Up`, `Victory`, `Open_Palm`은 출력하지 않아 숫자 라벨과의 흔들림을 방지합니다.
+## 원본 백업과 화자 등록 복원
 
-## AI 행동 계획
+수정 전 파일은 `backups/before_api_20261018_105455/`에 보관했습니다. Python 소스, Arduino 스케치, 의존성 목록, README, 기존 순서도와 `.gitignore`가 포함됩니다. `manifest.json`의 SHA-256으로 원본을 확인할 수 있습니다. 대용량 모델과 가상환경은 복제하지 않았고 기존 파일을 그대로 유지합니다.
 
-AI 계획기는 이 컴퓨터의 Ollama 모델로 8족 로봇의 상위 행동 단계를 한국어로 만듭니다. 결과는 계획만 출력하며 서보나 로봇을 직접 제어하지 않습니다. API 키는 필요하지 않습니다.
+명령행의 `--enroll`은 비활성화했습니다. 등록·식별 함수는 나중에 재사용할 수 있도록 라이브러리에 남겨두었고, 일반 실행 및 통합 모드에서는 호출하지 않습니다. 나중에 화자 식별만 다시 사용하려면 다음과 같이 명시적으로 등록하고 켤 수 있습니다.
 
-### 모델과 Ollama 준비
+```python
+from module.speech import enroll_speakers, run_live_transcription
 
-인터넷을 사용할 수 있을 때 [Windows용 Ollama](https://ollama.com/download/windows)를 설치하고, Ollama가 실행 중인 상태에서 모델을 내려받으세요. 기본 모델은 [qwen3.5:4b](https://ollama.com/library/qwen3.5%3A4b)이며 이미지와 텍스트 입력을 지원합니다. 모델 파일 외에도 실행용 RAM 또는 GPU 메모리가 필요합니다.
-
-```powershell
-ollama pull qwen3.5:4b
+enroll_speakers()  # 필요할 때 별도로 한 번 실행
+run_live_transcription(identify_speakers=True)
 ```
 
-Ollama의 클라우드 기능을 끄려면 트레이에서 기존 Ollama를 종료한 뒤 아래 명령으로 서버를 시작하세요. 이 터미널은 열어 둡니다. 환경 변수는 Ollama 서버를 시작하는 프로세스에 적용해야 합니다. [Ollama 로컬 전용 설정](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)
+식별을 다시 켜는 것만으로 AI 명령 권한 제한이 복원되지는 않습니다. 이전의 등록자 전용 로컬 AI 방식 전체를 복원하려면 백업의 관련 Python 파일과 `requirements.txt`를 함께 복원해야 합니다. 복원 전에 현재 수정본도 별도로 보관하세요.
+
+## 구성 및 동작 메모
+
+- `main.py`: 음성 전사, 통합 API 계획, 텍스트 API 계획, 손 모양 인식의 진입점.
+- `module/speech.py`: 16 kHz 모노 입력, 4초 분리 창·3초 이동·1초 중첩, 스트림별 발화 감지 및 한국어 전사.
+- `module/vision_assistant.py`: 모든 화자의 명령과 최신 JPEG를 묶어 순서대로 처리.
+- `module/action_planner.py`: OpenAI API 호출 및 계획 응답 검증.
+- `module/gesture.py`, `module/gesture_rules.py`: 손 모양 인식과 숫자·OK 규칙.
+- `sketch_oct17a/sketch_oct17a.ino`: 별도로 실행되는 PCA9685 서보 중앙 신호 설정.
+- `FLOWCHART.md`: 변경된 구조의 순서도.
+
+각 음성 스트림은 0.7초 침묵으로 발화 종료를 판단합니다. 20초 이상의 발화는 내부 전사 조각으로 나눠도 최종 콜백은 한 번 전달합니다. 화자 지문을 쓰지 않는 기본 모드의 채널 연결은 중첩 파형 비교로 수행합니다. CPU 분리 속도가 3초 이동 간격을 따라가지 못하면 경고합니다.
+
+## 검증
+
+외부 요청이나 실제 장치 구동 없이 회귀 테스트를 실행할 수 있습니다.
 
 ```powershell
-$env:OLLAMA_NO_CLOUD = "1"
-ollama serve
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-앱은 기본적으로 `http://127.0.0.1:11434`에 연결하며 HTTP 루프백 주소만 허용합니다. 프록시 환경 변수와 리다이렉트를 사용하지 않고, 로컬 가중치가 확인되지 않는 모델 및 클라우드 모델을 거절합니다. 모델을 자동 다운로드하거나 외부 AI 서비스로 전환하지 않습니다.
-
-다른 로컬 모델을 사용하려면 앱을 실행하는 터미널에 `OLLAMA_MODEL`을 설정하세요. 음성·영상 모드에는 이미지 입력을 지원하는 모델이 필요합니다.
-
-```powershell
-$env:OLLAMA_MODEL = "qwen3.5:4b"
-```
-
-### 텍스트 명령
-
-Ollama 서버가 실행 중인 상태에서 별도 터미널로 다음 명령을 실행합니다.
-
-```powershell
-# 대화형으로 명령 입력
-.\.venv\Scripts\python.exe .\main.py --plan
-
-# 명령을 인자로 전달
-.\.venv\Scripts\python.exe .\main.py --plan --command "앞으로 30cm 이동해"
-```
-
-다른 Python 코드에서는 `from module.action_planner import create_action_plan`으로 계획 기능을 가져올 수 있습니다. `create_action_plan(command, image=jpeg_bytes)`처럼 이미지 바이트를 함께 전달하거나 기존처럼 텍스트만 전달할 수 있습니다. 결과는 `ActionPlan`이며 `status`, `summary`, `steps`, `error` 필드를 제공합니다. 예전 `ai_action_planner.py` 진입점과 `from main import create_action_plan`도 유지합니다.
-
-### 등록 화자의 음성 + 최신 카메라 프레임
-
-처음에는 인터넷을 사용할 수 있을 때 `main.py --enroll`로 두 화자를 등록한 뒤, 기본 `main.py`를 한 번 실행해 음성 분리 모델과 Whisper 모델까지 준비하세요. 마이크를 듣기 시작하면 Ctrl+C로 종료합니다. 두 명의 등록자 모두 명령 권한을 가지며 `기타`는 미등록 음성을 뜻하는 예약 이름입니다.
-
-Ollama와 음성 모델 준비가 끝나면 다음 명령으로 통합 모드를 시작합니다.
-
-```powershell
-.\.venv\Scripts\python.exe .\main.py --assist
-
-# 두 번째 카메라 사용
-.\.venv\Scripts\python.exe .\main.py --assist --camera 1
-```
-
-카메라는 계속 최신 프레임 하나를 메모리에 유지합니다. 등록된 화자의 발화가 끝나 전사 콜백이 도착하면, 그 시점의 프레임을 JPEG로 복사해 전사된 명령과 함께 로컬 AI로 전달합니다. 발화 종료와 전사 완료 사이에는 음성 처리 지연이 있으므로 촬영 시점은 전사 완료 시점입니다. 미등록 화자의 발화는 AI에 보내지 않습니다.
-
-AI 처리는 음성 인식과 별도 작업자에서 FIFO 순서로 진행됩니다. 처리 중 다음 명령이 들어와도 각 명령은 접수 당시의 프레임을 유지합니다. 반복 발화도 별도 명령으로 처리하며, 영상이나 JPEG 파일을 디스크에 저장하지 않습니다. 모델이 느리면 명령 대기가 늘어날 수 있고 요청별 제한 시간은 120초입니다.
-
-카메라가 끊기거나 프레임이 없거나 1초 넘게 갱신되지 않았다면 해당 명령은 보내지 않습니다. Ollama 미실행·모델 부재·응답 형식 오류도 표시하고 로봇을 구동하지 않습니다. Ctrl+C로 음성 입력을 종료하면 접수된 명령을 순서대로 마무리하고 종료합니다.
-
-통합 모드는 음성 모델도 로컬 캐시만 사용합니다. 준비된 파일이 부족하면 다운로드 대신 오류를 표시합니다. 기본 음성 전사·화자 등록·손 모양 모드는 기존처럼 최초 모델 준비에 인터넷을 사용할 수 있습니다.
-
-## 코드 구조
-
-- `main.py`: 짧은 명령행 진입점이며 기존 공개 함수도 다시 제공합니다.
-- `module/`: 애플리케이션 기능 모듈을 묶는 Python 패키지입니다.
-  - `action_planner.py`: AI 텍스트 명령을 검증된 행동 계획으로 변환합니다.
-  - `vision_assistant.py`: 등록 화자의 발화와 최신 프레임을 묶어 로컬 AI에 순서대로 전달합니다.
-  - `speech.py`: 음성 분리, 화자 등록·식별, 발화 종료와 전사를 담당합니다.
-  - `gesture.py`: 카메라 입력, MediaPipe 결과 안정화와 미리보기를 담당합니다.
-  - `gesture_rules.py`: 숫자와 OK 모양의 순수 관절 좌표 규칙을 담습니다.
-
-기존 코드처럼 `from main import run_live_transcription` 또는 `from main import run_gesture_recognition`을 계속 사용할 수 있습니다. 기능별 코드에서는 `module.speech`와 `module.gesture`에서 직접 가져와도 됩니다.
-
-## 동작 메모
-
-- SepFormer는 4초 창, 3초 이동, 1초 중첩으로 실행됩니다.
-- 각 분리 스트림은 독립적으로 0.7초 침묵을 감지합니다.
-- 20초를 넘는 발화는 내부 전사 조각으로 나누되 최종 콜백은 한 번만 호출합니다.
-- 시작 시 CPU 분리 속도를 측정하며, 3초 이동 간격을 따라가지 못하면 경고합니다.
-- 모델은 `models/`, 화자 지문은 `data/speaker_profiles.json`에 저장되며 Git에서 제외됩니다.
+API 모델·입력 형식 참고: [모델 문서](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [구조화된 응답](https://developers.openai.com/api/docs/guides/structured-outputs), [이미지 입력](https://developers.openai.com/api/docs/guides/images-vision).
