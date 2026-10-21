@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import base64
 import time
 from typing import Any
 
-from .action_planner import (
-    PlannerConnectionError, PlannerResponseError, _friendly_api_error, _value,
-    create_api_client, selected_model,
+from .api_common import (
+    PlannerConnectionError, PlannerResponseError, friendly_api_error, response_value,
+    create_api_client, selected_model, user_content,
 )
 from .session_log import as_json, record_event
 
@@ -37,17 +36,11 @@ def create_conversation_reply(
     """Use no history, tools, or automatic retries; leave client ownership intact."""
     if not text.strip():
         raise ValueError("대화 문장이 비어 있습니다.")
-    if image is not None and (not isinstance(image, bytes) or not image):
-        raise ValueError("image에는 비어 있지 않은 JPEG 바이트를 전달해 주세요.")
+    content = user_content(text, image)
     owns_client = client is None
     if owns_client:
         client = create_api_client()
     selected = selected_model(model)
-    content = [{"type": "input_text", "text": text.strip()}]
-    if image is not None:
-        encoded = base64.b64encode(image).decode("ascii")
-        content.append({"type": "input_image",
-                        "image_url": f"data:image/jpeg;base64,{encoded}", "detail": "auto"})
     started = time.monotonic()
     try:
         record_event("conversation_request", model=selected, image_sent=image is not None)
@@ -60,20 +53,20 @@ def create_conversation_reply(
                 max_output_tokens=CONVERSATION_MAX_OUTPUT_TOKENS, store=False,
             )
         except Exception as exc:
-            raise PlannerConnectionError(_friendly_api_error(exc, model=selected)) from exc
+            raise PlannerConnectionError(friendly_api_error(exc, model=selected)) from exc
         record_event("conversation_response", model=selected,
-                     response_id=_value(response, "id"), status=_value(response, "status"),
-                     output=as_json(_value(response, "output")),
-                     output_text=_value(response, "output_text"),
-                     usage=as_json(_value(response, "usage")), image_sent=image is not None,
+                     response_id=response_value(response, "id"), status=response_value(response, "status"),
+                     output=as_json(response_value(response, "output")),
+                     output_text=response_value(response, "output_text"),
+                     usage=as_json(response_value(response, "usage")), image_sent=image is not None,
                      elapsed_seconds=time.monotonic() - started)
-        if _value(response, "status") != "completed":
+        if response_value(response, "status") != "completed":
             raise PlannerResponseError("대화 응답이 완료되지 않았습니다.")
-        for output in _value(response, "output", []) or []:
-            for part in _value(output, "content", []) or []:
-                if _value(part, "type") == "refusal":
+        for output in response_value(response, "output", []) or []:
+            for part in response_value(output, "content", []) or []:
+                if response_value(part, "type") == "refusal":
                     raise PlannerResponseError("AI가 대화 응답을 거절했습니다.")
-        reply = _value(response, "output_text")
+        reply = response_value(response, "output_text")
         if not isinstance(reply, str) or not reply.strip():
             raise PlannerResponseError("대화 응답이 비어 있습니다.")
         return reply.strip()

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .gesture_rules import RuleResult, classify_landmarks
+from .gesture_rules import FINGER_NAMES, RuleResult, classify_landmarks
 
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/"

@@ -14,6 +14,7 @@ import httpx2 as httpx
 from openai import OpenAI
 
 import main
+from module import cli
 import ai_action_planner
 from module import decision_router as router
 from module import session_log
@@ -210,10 +211,10 @@ class LogTests(unittest.TestCase):
         fixed = router.CommandResult(router.CommandDecision("not_command", 1), message=router.FIXED_MESSAGES["not_command"])
         with tempfile.TemporaryDirectory() as folder, patch.object(session_log, "LOG_ROOT", Path(folder)), \
                 contextlib.redirect_stdout(io.StringIO()):
-            with patch.object(main, "process_command", return_value=fixed) as process:
+            with patch.object(cli, "process_command", return_value=fixed) as process:
                 self.assertEqual(main.main(["--plan", "--command", "안녕"]), 0)
                 process.assert_called_once_with("안녕")
-            with patch.object(ai_action_planner, "process_command", return_value=fixed), \
+            with patch.object(cli, "process_command", return_value=fixed), \
                     patch("builtins.input", return_value="안녕"):
                 self.assertEqual(ai_action_planner.main(), 0)
             logs = list(Path(folder).glob("*.log"))

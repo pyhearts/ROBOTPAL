@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from module import speech
+from module import speech, transcription
 
 
 def audio(seconds, level=0.1):
@@ -63,7 +63,7 @@ class DirectDetectorTests(unittest.TestCase):
         for task in tasks:
             jobs.put(task)
         jobs.put(speech._STOP)
-        with patch.object(speech, "transcribe_utterance", side_effect=["첫 부분", "마지막 부분"]), \
+        with patch.object(transcription, "transcribe_utterance", side_effect=["첫 부분", "마지막 부분"]), \
                 contextlib.redirect_stderr(io.StringIO()):
             speech._transcription_worker(None, None, jobs, lambda *args: results.append(args))
         self.assertEqual(results, [("음성 입력", "첫 부분 마지막 부분")])
@@ -113,13 +113,13 @@ class DirectRuntimeTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(speech, "_load_transcription_dependencies",
                           return_value=(SimpleNamespace(InputStream=Microphone), Mock())), \
-                patch.object(speech, "_load_whisper_model", return_value=object()), \
-                patch.object(speech, "_load_runtime_dependencies", side_effect=AssertionError("legacy loader")), \
-                patch.object(speech, "_load_voice_models", side_effect=AssertionError("SepFormer")), \
-                patch.object(speech, "_separation_worker", side_effect=AssertionError("separator worker")), \
+                patch.object(transcription, "_load_whisper_model", return_value=object()), \
+                patch("module.legacy_speech._load_runtime_dependencies", side_effect=AssertionError("legacy loader")), \
+                patch("module.legacy_speech._load_voice_models", side_effect=AssertionError("SepFormer")), \
+                patch("module.legacy_speech._separation_worker", side_effect=AssertionError("separator worker")), \
                 patch.object(speech, "load_speaker_profiles", side_effect=AssertionError("registration")), \
                 patch.object(speech.queue, "Queue", side_effect=[captured, jobs]), \
-                patch.object(speech, "transcribe_utterance", side_effect=transcribe), \
+                patch.object(transcription, "transcribe_utterance", side_effect=transcribe), \
                 contextlib.redirect_stdout(output):
             speech.run_live_transcription(lambda *args: received.append(args), options=speech.SpeechOptions(live_preview=False))
         self.assertEqual(received, [("음성 입력", "명령"), ("음성 입력", "명령")])
@@ -143,8 +143,8 @@ class DirectRuntimeTests(unittest.TestCase):
         received = []
         with patch.object(speech, "_load_transcription_dependencies",
                           return_value=(SimpleNamespace(InputStream=open_and_stop), Mock())), \
-                patch.object(speech, "_load_whisper_model", return_value=object()), \
-                patch.object(speech, "transcribe_utterance", return_value="멈춰"), \
+                patch.object(transcription, "_load_whisper_model", return_value=object()), \
+                patch.object(transcription, "transcribe_utterance", return_value="멈춰"), \
                 contextlib.redirect_stdout(io.StringIO()):
             speech.run_live_transcription(lambda *args: received.append(args), options=speech.SpeechOptions(live_preview=False))
         self.assertEqual(received, [("음성 입력", "멈춰")])
@@ -153,7 +153,7 @@ class DirectRuntimeTests(unittest.TestCase):
         jobs = queue.Queue()
         with patch.object(speech, "_load_transcription_dependencies", return_value=(
                 SimpleNamespace(InputStream=Mock(side_effect=OSError("no mic"))), Mock())), \
-                patch.object(speech, "_load_whisper_model", return_value=object()), \
+                patch.object(transcription, "_load_whisper_model", return_value=object()), \
                 patch.object(speech.queue, "Queue", side_effect=[queue.Queue(), jobs]), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, "마이크"):

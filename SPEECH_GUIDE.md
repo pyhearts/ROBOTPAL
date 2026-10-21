@@ -2,6 +2,22 @@
 
 기본 실행은 마이크 → Silero 음성 감지 → 로컬 Whisper small → 품질 검사 순서입니다. `--assist`에서는 품질 검사를 통과한 전사만 Decisions로 전달합니다. 실제 한국어 인식 정확도 개선 폭은 같은 녹음으로 비교해야 합니다.
 
+## 직접 마이크와 선택적 화자 분리 설치
+
+직접 마이크는 `requirements-speech.txt`로 설치합니다. 이 목록은 텍스트 API 의존성도 포함합니다. 통합 모드에는 `requirements-vision.txt`를 함께 설치합니다. 기본 실행은 `speech.py`에서 입력을 수집하고 `utterance.py`와 `transcription.py`를 통해 감지·전사를 처리하며, 화자 등록 파일과 `legacy_speech.py`를 읽지 않습니다. Silero는 Faster Whisper에 포함된 ONNX 모델을 사용하므로 기본 경로에 SpeechBrain·PyTorch가 필요하지 않습니다.
+
+화자 등록·식별·SepFormer 분리는 `requirements-legacy-speech.txt`를 추가 설치한 뒤 라이브러리에서 명시적으로 호출합니다. 이 목록은 직접 마이크 의존성도 포함합니다.
+
+```python
+from module.speech import enroll_speakers, load_speaker_profiles, run_separated_transcription
+
+enroll_speakers()  # 등록이 필요할 때 별도로 실행
+profiles = load_speaker_profiles()
+run_separated_transcription(identify_speakers=True)
+```
+
+`run_live_transcription(identify_speakers=True)`도 같은 선택 경로로 위임합니다. 화자 식별은 명령 권한을 제한하지 않습니다. 일반 CLI에는 등록 모드를 추가하지 않았으며, 기본 전사는 겹친 음성을 분리하지 않습니다.
+
 ## 먼저 장치와 음량 확인
 
 ```powershell

@@ -13,8 +13,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-import main
-from module import speech
+from module import cli, speech, speech_quality, vision_assistant, transcription, utterance
 from module import speech_quality as quality
 from module import speech_evaluation as evaluation
 
@@ -47,7 +46,7 @@ class StreamingVadTests(unittest.TestCase):
         tasks = detector.process(np.concatenate([audio(0.16), audio(0.8, 0)]), 0)
         self.assertEqual(len(tasks), 1)
         self.assertTrue(tasks[0].final)
-        self.assertLess(np.max(tasks[0].audio), speech.VAD_THRESHOLD)
+        self.assertLess(np.max(tasks[0].audio), utterance.VAD_THRESHOLD)
         self.assertAlmostEqual(tasks[0].speech_end_time, 0.16)
 
     def test_loud_noise_without_voice_probability_is_ignored(self):
@@ -129,8 +128,8 @@ class RecognitionQualityTests(unittest.TestCase):
             (iter([segment("30cm", avg_logprob=-2)]), SimpleNamespace()),
         ]
         jobs, received = queue.Queue(), []
-        jobs.put(speech.TranscriptionTask("same", -1, audio(1), False, 0))
-        jobs.put(speech.TranscriptionTask("same", -1, audio(1), True, 0))
+        jobs.put(utterance.TranscriptionTask("same", -1, audio(1), False, 0))
+        jobs.put(utterance.TranscriptionTask("same", -1, audio(1), True, 0))
         jobs.put(speech._STOP)
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
@@ -203,14 +202,14 @@ class MicrophoneAndCliTests(unittest.TestCase):
         self.assertIn("찌그러집니다", output.getvalue())
 
     def test_cli_passes_selected_settings_to_default_and_assistant(self):
-        with patch.object(main, "run_live_transcription") as run:
-            self.assertEqual(main._run_main(["--input-device", "2", "--stt-beam", "5", "--show-levels"]), 0)
+        with patch.object(speech, "run_live_transcription") as run:
+            self.assertEqual(cli.run(["--input-device", "2", "--stt-beam", "5", "--show-levels"]), 0)
         options = run.call_args.kwargs["options"]
         self.assertEqual(options.input_device, 2)
         self.assertEqual(options.beam_size, 5)
         self.assertTrue(options.show_levels)
-        with patch.object(main, "run_voice_vision_assistant") as run:
-            self.assertEqual(main._run_main(["--assist", "--stt-backend", "openai"]), 0)
+        with patch.object(vision_assistant, "run_voice_vision_assistant") as run:
+            self.assertEqual(cli.run(["--assist", "--stt-backend", "openai"]), 0)
         self.assertEqual(run.call_args.kwargs["options"].backend, "openai")
 
     def test_bad_option_combinations_are_rejected(self):
@@ -218,11 +217,11 @@ class MicrophoneAndCliTests(unittest.TestCase):
                      ["--sample-seconds", "2"], ["--gesture", "--input-device", "0"]]:
             with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
-                    main._run_main(args)
+                    cli.run(args)
 
     def test_microphone_listing_needs_no_model_or_api(self):
-        with patch.object(main, "list_microphones") as listing, patch.object(main, "run_live_transcription") as run:
-            self.assertEqual(main._run_main(["--list-mics"]), 0)
+        with patch.object(speech_quality, "list_microphones") as listing, patch.object(speech, "run_live_transcription") as run:
+            self.assertEqual(cli.run(["--list-mics"]), 0)
         listing.assert_called_once()
         run.assert_not_called()
 
@@ -244,7 +243,7 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             manifest = Path(folder) / "bad.jsonl"
             manifest.write_text(json.dumps({"audio": "missing.wav", "text": "멈춰"}), encoding="utf-8")
-            with patch.object(speech, "create_speech_transcriber") as create:
+            with patch.object(transcription, "create_speech_transcriber") as create:
                 with self.assertRaises(ValueError):
                     evaluation.compare_transcription_settings(manifest, options=quality.SpeechOptions(), models=["small"], beams=[3])
             create.assert_not_called()
@@ -267,7 +266,7 @@ class EvaluationTests(unittest.TestCase):
             manifest = root / "manifest.jsonl"
             manifest.write_text(json.dumps({"audio": "sample.wav", "text": "앞으로 30cm 이동해",
                                            "fields": {"direction": "forward", "distance_cm": 30}}, ensure_ascii=False), encoding="utf-8")
-            with patch.object(speech, "create_speech_transcriber", return_value=fake), \
+            with patch.object(transcription, "create_speech_transcriber", return_value=fake), \
                     patch.object(evaluation, "SileroProbability", return_value=lambda frame: float(np.max(np.abs(frame)) > 0)), \
                     contextlib.redirect_stdout(io.StringIO()):
                 report_path = evaluation.compare_transcription_settings(

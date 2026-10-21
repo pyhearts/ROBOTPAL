@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import base64
-import os
 import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from .session_log import as_json, record_event
 
-DEFAULT_MODEL = "gpt-6-luna"
-DEFAULT_HOST = "https://api.openai.com/v1"
-REQUEST_TIMEOUT_SECONDS = 120.0
+from .api_common import (
+    DEFAULT_MODEL, DEFAULT_HOST, REQUEST_TIMEOUT_SECONDS, PlannerConnectionError,
+    PlannerResponseError, create_api_client, selected_model, response_value,
+    friendly_api_error, user_content,
+)
 
 PLANNER_INSTRUCTIONS = """
 당신은 ROBOTPAL의 8족 로봇을 위한 상위 행동 계획 생성기입니다.
@@ -106,43 +106,8 @@ class ActionPlan(BaseModel):
         return self
 
 
-class PlannerResponseError(RuntimeError):
-    """Raised when the model does not return a usable structured plan."""
-
-
-class PlannerConnectionError(RuntimeError):
-    """Raised when API configuration or the OpenAI service is unavailable."""
-
-
 def _invalid_plan(message: str) -> ActionPlan:
     return ActionPlan(status="invalid", summary="", steps=[], error=message)
-
-
-def create_api_client() -> Any:
-    """Create an OpenAI client without logging or persisting credentials."""
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key:
-        raise PlannerConnectionError("OPENAI_API_KEY 환경 변수에 OpenAI API 키를 설정해 주세요.")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise PlannerConnectionError(
-            "OpenAI Python 패키지가 없습니다. requirements.txt의 의존성을 설치해 주세요."
-        ) from exc
-    return OpenAI(
-        api_key=key,
-        base_url=DEFAULT_HOST,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        max_retries=0,
-    )
-
-
-def _value(value: Any, key: str, default: Any = None) -> Any:
-    return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
-
-
-def selected_model(model: str | None = None) -> str:
-    return (model or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
 
 def create_action_plan(
@@ -156,20 +121,11 @@ def create_action_plan(
     normalized_command = command.strip()
     if not normalized_command:
         return _invalid_plan("명령이 비어 있습니다. 수행할 작업을 구체적으로 입력해 주세요.")
-    if image is not None and (not isinstance(image, bytes) or not image):
-        raise ValueError("image에는 비어 있지 않은 JPEG 이미지 바이트를 전달해 주세요.")
+    content = user_content(normalized_command, image)
     owns_client = client is None
     if owns_client:
         client = create_api_client()
     selected = selected_model(model)
-    content: list[dict[str, Any]] = [{"type": "input_text", "text": normalized_command}]
-    if image is not None:
-        encoded = base64.b64encode(image).decode("ascii")
-        content.append({
-            "type": "input_image",
-            "image_url": f"data:image/jpeg;base64,{encoded}",
-            "detail": "auto",
-        })
     started = time.monotonic()
     try:
         response = client.responses.create(
@@ -187,22 +143,22 @@ def create_action_plan(
     except Exception as exc:
         record_event("responses_error", error_type=type(exc).__name__,
                      elapsed_seconds=time.monotonic() - started)
-        raise PlannerConnectionError(_friendly_api_error(exc, model=selected)) from exc
+        raise PlannerConnectionError(friendly_api_error(exc, model=selected)) from exc
     finally:
         if owns_client:
             client.close()
-    record_event("responses_result", model=selected, response_id=_value(response, "id"),
-                 status=_value(response, "status"), output=as_json(_value(response, "output")),
-                 output_text=_value(response, "output_text"), usage=as_json(_value(response, "usage")),
+    record_event("responses_result", model=selected, response_id=response_value(response, "id"),
+                 status=response_value(response, "status"), output=as_json(response_value(response, "output")),
+                 output_text=response_value(response, "output_text"), usage=as_json(response_value(response, "usage")),
                  elapsed_seconds=time.monotonic() - started)
-    if _value(response, "status") != "completed":
+    if response_value(response, "status") != "completed":
         raise PlannerResponseError("OpenAI 응답이 완료되지 않았습니다. 다시 시도해 주세요.")
-    for output in _value(response, "output", []) or []:
-        for part in _value(output, "content", []) or []:
-            if _value(part, "type") == "refusal":
+    for output in response_value(response, "output", []) or []:
+        for part in response_value(output, "content", []) or []:
+            if response_value(part, "type") == "refusal":
                 return _invalid_plan("OpenAI가 이 요청의 계획 생성을 거절했습니다.")
     try:
-        text = _value(response, "output_text")
+        text = response_value(response, "output_text")
         if not isinstance(text, str) or not text.strip():
             raise ValueError("빈 응답")
         return ActionPlan.model_validate_json(text)
@@ -217,23 +173,3 @@ def print_action_plan(plan: ActionPlan) -> None:
     print(f"행동 계획: {plan.summary}", flush=True)
     for number, step in enumerate(plan.steps, start=1):
         print(f"{number}. {step}", flush=True)
-
-
-def _friendly_api_error(exc: Exception, *, model: str = DEFAULT_MODEL) -> str:
-    """Report useful errors without echoing request data or credentials."""
-    status = _value(exc, "status_code")
-    if status == 401:
-        return "OpenAI API 인증에 실패했습니다. OPENAI_API_KEY를 확인해 주세요."
-    if status == 403:
-        return "OpenAI API 또는 선택한 모델에 대한 접근 권한이 없습니다."
-    if status == 404:
-        return f"OpenAI 모델 {model}을 사용할 수 없습니다. OPENAI_MODEL과 접근 권한을 확인해 주세요."
-    if status == 429:
-        return "OpenAI API 사용 한도 또는 요청 제한에 도달했습니다. 결제·사용량을 확인해 주세요."
-    if status == 400:
-        return "OpenAI가 요청을 거절했습니다. 모델의 이미지 입력·구조화된 응답 지원을 확인해 주세요."
-    if "Timeout" in type(exc).__name__:
-        return "OpenAI API 응답 시간이 초과되었습니다."
-    if isinstance(exc, ConnectionError) or "Connect" in type(exc).__name__:
-        return "OpenAI API에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요."
-    return "OpenAI API 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."

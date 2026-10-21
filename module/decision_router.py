@@ -8,9 +8,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .action_planner import (
-    ActionPlan, PlannerConnectionError, PlannerResponseError, _friendly_api_error,
-    _value, create_action_plan, create_api_client,
+from .action_planner import ActionPlan, create_action_plan
+from .api_common import (
+    PlannerConnectionError, PlannerResponseError, friendly_api_error,
+    response_value, create_api_client,
 )
 from .session_log import as_json, command_context, record_event
 from .conversation import create_conversation_reply
@@ -85,21 +86,21 @@ def classify_command(text: str, *, client: Any) -> CommandDecision:
     except Exception as exc:
         record_event("decisions_error", error_type=type(exc).__name__,
                      elapsed_seconds=time.monotonic() - started)
-        raise PlannerConnectionError(_friendly_api_error(exc, model=DECISION_MODEL)) from exc
-    answers = _value(response, "answers", [])
+        raise PlannerConnectionError(friendly_api_error(exc, model=DECISION_MODEL)) from exc
+    answers = response_value(response, "answers", [])
     record_event("decisions_response", model=DECISION_MODEL,
                  answers=as_json(answers),
-                 usage=as_json(_value(response, "usage")),
+                 usage=as_json(response_value(response, "usage")),
                  elapsed_seconds=time.monotonic() - started)
     if not isinstance(answers, list) or len(answers) != 1:
         raise PlannerResponseError("Decisions 분류 응답 형식이 올바르지 않습니다.")
     answer = answers[0]
-    if _value(answer, "name") != QUESTION_NAME:
+    if response_value(answer, "name") != QUESTION_NAME:
         raise PlannerResponseError("Decisions 분류 응답의 질문 이름이 올바르지 않습니다.")
-    if _value(answer, "type") == "refusal":
+    if response_value(answer, "type") == "refusal":
         return CommandDecision("uncertain", 0.0)
-    category, confidence = _value(answer, "choice"), _value(answer, "confidence")
-    if (_value(answer, "type") != "choice"
+    category, confidence = response_value(answer, "choice"), response_value(answer, "confidence")
+    if (response_value(answer, "type") != "choice"
             or not isinstance(category, str) or category not in {choice["value"] for choice in CHOICES}
             or isinstance(confidence, bool) or not isinstance(confidence, (float, int))
             or not math.isfinite(confidence) or not 0 <= confidence <= 1):

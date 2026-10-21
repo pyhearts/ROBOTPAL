@@ -10,8 +10,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-import main
-from module import speech
+from module import cli, speech, transcription, utterance
 from module import speech_quality as quality
 from module.live_transcription import LiveTranscriptionQueue, PreviewTask
 
@@ -21,7 +20,7 @@ def preview(identity="a", text_value=0.1):
 
 
 def final(identity="a", text_value=0.2):
-    return speech.TranscriptionTask(identity, -1, np.full(16000, text_value, dtype=np.float32), True, 1)
+    return utterance.TranscriptionTask(identity, -1, np.full(16000, text_value, dtype=np.float32), True, 1)
 
 
 def result(text="임시 문장", accepted=True):
@@ -149,9 +148,9 @@ class WorkerTests(unittest.TestCase):
         with patch.object(speech, "_load_transcription_dependencies", return_value=(SimpleNamespace(InputStream=Microphone), Mock())), \
                 patch.object(speech, "prepare_microphone"), \
                 patch.object(speech, "SileroProbability", return_value=lambda frame: float(np.max(frame) > 0)), \
-                patch.object(speech, "_load_whisper_model", return_value=model), \
+                patch.object(transcription, "_load_whisper_model", return_value=model), \
                 patch.object(speech.queue, "Queue", return_value=captured), \
-                patch.object(speech, "record_event", side_effect=log), \
+                patch.object(transcription, "record_event", side_effect=log), \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
             speech.run_live_transcription(lambda *args: callbacks.append(args))
         self.assertEqual(observations, [True])
@@ -180,7 +179,7 @@ class WorkerTests(unittest.TestCase):
             if event == "stt_preview_displayed":
                 displayed.set()
 
-        with patch.object(speech, "record_event", side_effect=log), contextlib.redirect_stdout(output):
+        with patch.object(transcription, "record_event", side_effect=log), contextlib.redirect_stdout(output):
             worker = threading.Thread(target=speech._transcription_worker,
                 args=(transcriber, None, jobs, lambda *args: calls.append(args)))
             worker.start()
@@ -286,8 +285,8 @@ class PreviewAndLimitTests(unittest.TestCase):
         client.audio.transcriptions.create.assert_not_called()
 
     def test_cli_exposes_preview_and_output_limits(self):
-        with patch.object(main, "run_live_transcription") as run:
-            self.assertEqual(main._run_main(["--no-live-preview", "--stt-max-tokens", "64"]), 0)
+        with patch.object(speech, "run_live_transcription") as run:
+            self.assertEqual(cli.run(["--no-live-preview", "--stt-max-tokens", "64"]), 0)
         options = run.call_args.kwargs["options"]
         self.assertFalse(options.live_preview)
         self.assertEqual(options.max_output_tokens, 64)

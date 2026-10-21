@@ -292,7 +292,7 @@ class SpeechTranscriber:
         return ""
 
     def _api(self, audio: np.ndarray) -> str:
-        from .action_planner import PlannerConnectionError, _friendly_api_error
+        from .api_common import PlannerConnectionError, friendly_api_error
         try:
             response = self.client.audio.transcriptions.create(
                 model="gpt-transcribe", file=("utterance.wav", encode_wav(audio), "audio/wav"),
@@ -300,7 +300,7 @@ class SpeechTranscriber:
                 response_format="json", timeout=60.0,
             )
         except Exception as exc:
-            raise PlannerConnectionError(_friendly_api_error(exc, model="gpt-transcribe")) from exc
+            raise PlannerConnectionError(friendly_api_error(exc, model="gpt-transcribe")) from exc
         record_event("stt_api_response", model="gpt-transcribe", text=response.text,
                      usage=as_json(getattr(response, "usage", None)))
         return response.text.strip()

@@ -13,6 +13,7 @@ import httpx2 as httpx
 from openai import OpenAI
 
 import main
+from module import cli, speech
 import ai_action_planner
 from module import conversation, decision_router as router, session_log
 from module import vision_assistant as vision
@@ -202,9 +203,9 @@ class ConversationTests(unittest.TestCase):
                         self.assertEqual(main.main(["--plan", "--command", "안녕"]), 0)
                     self.assertIn("[AI 답변]", output.getvalue())
                 self.assertEqual(len(self.requests), 2)
-        with patch.object(main, "run_live_transcription") as transcribe, \
+        with patch.object(speech, "run_live_transcription") as transcribe, \
                 patch.object(router, "create_api_client") as create:
-            self.assertEqual(main._run_main([]), 0)
+            self.assertEqual(cli.run([]), 0)
         transcribe.assert_called_once_with()
         create.assert_not_called()
 

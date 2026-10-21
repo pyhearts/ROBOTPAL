@@ -1,0 +1,5 @@
+-r requirements-core.txt
+faster-whisper>=1.2.1,<2
+onnxruntime>=1.17,<2
+numpy>=1.26,<3
+sounddevice>=0.5,<1

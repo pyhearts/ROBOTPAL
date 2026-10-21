@@ -13,9 +13,8 @@ import httpx2 as httpx
 import numpy as np
 from openai import OpenAI
 
-import main
+from module import cli, speech, transcription, utterance, legacy_speech
 from module import action_planner as planner
-from module import speech
 from module import vision_assistant as vision
 from module.decision_router import CommandDecision
 
@@ -185,9 +184,9 @@ class VoiceTests(unittest.TestCase):
     def test_transcription_without_identifier_finishes_once(self):
         tasks, received = queue.Queue(), []
         for final in [False, True]:
-            tasks.put(speech.TranscriptionTask("utterance", 1, np.ones(1024), final, 0))
+            tasks.put(utterance.TranscriptionTask("utterance", 1, np.ones(1024), final, 0))
         tasks.put(speech._STOP)
-        with patch.object(speech, "transcribe_utterance", side_effect=["앞으로", "30cm 이동해"]), \
+        with patch.object(transcription, "transcribe_utterance", side_effect=["앞으로", "30cm 이동해"]), \
                 contextlib.redirect_stderr(io.StringIO()):
             speech._transcription_worker(None, None, tasks, lambda *args: received.append(args))
         self.assertEqual(received, [("음성 스트림 2", "앞으로 30cm 이동해")])
@@ -195,7 +194,7 @@ class VoiceTests(unittest.TestCase):
 
     def test_default_voice_model_loader_never_loads_speaker_model(self):
         speaker, separator = Mock(), Mock()
-        embedder, _ = speech._load_voice_models(Mock(), separator, speaker, Mock())
+        embedder, _ = legacy_speech._load_voice_models(Mock(), separator, speaker, Mock())
         self.assertIsNone(embedder)
         speaker.from_hparams.assert_not_called()
         separator.from_hparams.assert_called_once()
@@ -212,16 +211,16 @@ class VoiceTests(unittest.TestCase):
         camera = vision.LatestFrameCamera()
         camera._frame = np.zeros((2, 2, 3), dtype=np.uint8)
         camera._captured_at = 0
-        with patch.object(vision.time, "monotonic", return_value=2):
+        with patch("module.camera.time.monotonic", return_value=2):
             with self.assertRaisesRegex(RuntimeError, "오래"):
                 camera.snapshot()
 
     def test_enrollment_cli_disabled_and_default_is_transcription(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                main._run_main(["--enroll"])
-        with patch.object(main, "run_live_transcription") as run:
-            self.assertEqual(main._run_main([]), 0)
+                cli.run(["--enroll"])
+        with patch.object(speech, "run_live_transcription") as run:
+            self.assertEqual(cli.run([]), 0)
         run.assert_called_once_with()
 
     def test_assistant_start_and_cleanup_use_no_profile(self):

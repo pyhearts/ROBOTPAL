@@ -1,0 +1,254 @@
+{
+  "created_on": "2026-10-21",
+  "files": [
+    {
+      "original_path": "module/local_tts.py",
+      "archive_path": "source/module/local_tts.py",
+      "sha256": "e71784db6f0faa7cbe259ab65749558bd9e0ced11c2a42d02de1fbc70b409a4a"
+    },
+    {
+      "original_path": "module/local_tts_worker.py",
+      "archive_path": "source/module/local_tts_worker.py",
+      "sha256": "2011ced78bafd990547e0f5caa7def8b4d07faed78938b0096a9012aa6e2bfd0"
+    },
+    {
+      "original_path": "module/reference_tts_backend.py",
+      "archive_path": "source/module/reference_tts_backend.py",
+      "sha256": "9d0de46db9ff3c8414ca465aa00b34a9494f34ea31ed8bd211a9343eac0c6754"
+    },
+    {
+      "original_path": "module/reference_voice.py",
+      "archive_path": "source/module/reference_voice.py",
+      "sha256": "8b83d8d03fa8e7fcf7efde76f63147abcf12d18bbb59e88bd99135fcdaee5b5e"
+    },
+    {
+      "original_path": "module/audio_gate.py",
+      "archive_path": "source/module/audio_gate.py",
+      "sha256": "3580584c6c5d6c5b974e8da73a91af353032babaea61791d08548ea185ba6ffd"
+    },
+    {
+      "original_path": "setup_tts.py",
+      "archive_path": "source/setup_tts.py",
+      "sha256": "806ffd1024ea079fbdd9b9de45ae244a6bf2f07058c50a4717d175bab395bfca"
+    },
+    {
+      "original_path": "setup_reference_tts.py",
+      "archive_path": "source/setup_reference_tts.py",
+      "sha256": "ee3a9165b8457bf85fbdcec12ecbc0812eb91b0baa76e2ed566b700a4184fcef"
+    },
+    {
+      "original_path": "requirements-tts.txt",
+      "archive_path": "source/requirements-tts.txt",
+      "sha256": "e428df3ce92463f5e9d68e71efcde671ad74079f0dc7e6769bd791da49732248"
+    },
+    {
+      "original_path": "requirements-reference-tts.txt",
+      "archive_path": "source/requirements-reference-tts.txt",
+      "sha256": "e46df14bfc2310131c05dc5a7fdec67ce5d9ed1470064b6c44d5c60e2e3e9b76"
+    },
+    {
+      "original_path": "tools/prepare_tts_models.py",
+      "archive_path": "source/tools/prepare_tts_models.py",
+      "sha256": "24be48486dbd5dbf5cb92868faba38d14fd8875f6f12de897980c6471843a038"
+    },
+    {
+      "original_path": "tools/prepare_reference_tts_models.py",
+      "archive_path": "source/tools/prepare_reference_tts_models.py",
+      "sha256": "82d3fb11a1b88b29c878f5375572f9cf01120f5810e5267b2d247b0ebec01fd1"
+    },
+    {
+      "original_path": "tools/curate_reference_voice.py",
+      "archive_path": "source/tools/curate_reference_voice.py",
+      "sha256": "a876110c12831b0836035c38b06c2ce5166e96476c9089076c700f13a63ded75"
+    },
+    {
+      "original_path": "tools/benchmark_local_tts.py",
+      "archive_path": "source/tools/benchmark_local_tts.py",
+      "sha256": "7f27267ca56a55da7f09adf97448882dfc642329dfb77b23319303b27f9f08dc"
+    },
+    {
+      "original_path": "tools/compare_tts_latency.py",
+      "archive_path": "source/tools/compare_tts_latency.py",
+      "sha256": "9c782402fb9ab9c489b152d3b0344fdb853a6f4fa27906e6e0d21aa0173887cb"
+    },
+    {
+      "original_path": "tools/tts_comparison_worker.py",
+      "archive_path": "source/tools/tts_comparison_worker.py",
+      "sha256": "35aa9cd538c93a2bdec52c7cacc8aba30c440996d8369c9b399a83611094dac2"
+    },
+    {
+      "original_path": "tests/test_local_tts.py",
+      "archive_path": "source/tests/test_local_tts.py",
+      "sha256": "3b2f4d3ccc581b37dd7698b58e8dfc7bc982a0edd2af9c269d280ff42d53c1ca"
+    },
+    {
+      "original_path": "tests/test_reference_tts.py",
+      "archive_path": "source/tests/test_reference_tts.py",
+      "sha256": "75c8f4afabea7d1b1ebaefc1c479ad6241cc6d8c5c2e60fc09d2e18415f0efe8"
+    },
+    {
+      "original_path": "main.py",
+      "archive_path": "integration_context/main.py",
+      "sha256": "031c0d40443df37a0005fd48eb8372ee1c7e3c360b4db5315778fcf343b622b2"
+    },
+    {
+      "original_path": "module/speech.py",
+      "archive_path": "integration_context/module/speech.py",
+      "sha256": "590c837aa479970ae293848416c37e89516401835a969dfc20b23c02b2c02e2d"
+    },
+    {
+      "original_path": "module/vision_assistant.py",
+      "archive_path": "integration_context/module/vision_assistant.py",
+      "sha256": "ad14de1dab157374775d4445d95d94fdadac56baaab03997a95ce67cc435c557"
+    },
+    {
+      "original_path": "module/session_log.py",
+      "archive_path": "integration_context/module/session_log.py",
+      "sha256": "4eb9a45f082cdd5db7cf4c2b6e7b87164aa09cff8a9f826a1fbd26a0ef958edb"
+    },
+    {
+      "original_path": "TTS_GUIDE.md",
+      "archive_path": "TTS_GUIDE.md",
+      "sha256": "3a3d726a0e573b48a9f083d68504dcda9cfe8980d935c1e99446e63c1be4dc59"
+    }
+  ],
+  "baseline_tests": {
+    "test_api_assistant.py": [
+      "PlannerTests.test_real_sdk_text_request_and_response",
+      "PlannerTests.test_jpeg_round_trip_and_model_selection",
+      "PlannerTests.test_invalid_command_response",
+      "PlannerTests.test_refusal",
+      "PlannerTests.test_malformed_inconsistent_and_incomplete_responses",
+      "PlannerTests.test_auth_and_limit_errors_do_not_echo_server_body",
+      "PlannerTests.test_empty_input_needs_no_key_and_missing_key_is_clear",
+      "PlannerTests.test_bad_image_never_calls_api",
+      "PlannerTests.test_owned_client_is_closed_on_success_and_failure",
+      "VoiceTests.test_all_speakers_repeats_and_snapshot_fifo",
+      "VoiceTests.test_empty_and_unavailable_camera_do_not_reach_planner",
+      "VoiceTests.test_api_error_does_not_discard_next_command",
+      "VoiceTests.test_transcription_without_identifier_finishes_once",
+      "VoiceTests.test_default_voice_model_loader_never_loads_speaker_model",
+      "VoiceTests.test_default_start_never_reads_registration",
+      "VoiceTests.test_stale_camera_frame_rejected",
+      "VoiceTests.test_enrollment_cli_disabled_and_default_is_transcription",
+      "VoiceTests.test_assistant_start_and_cleanup_use_no_profile"
+    ],
+    "test_conversation.py": [
+      "ConversationTests.test_text_reply_drops_available_image_and_uses_no_history_or_tools",
+      "ConversationTests.test_visual_reply_sends_exact_selected_jpeg",
+      "ConversationTests.test_visual_without_image_skips_reply",
+      "ConversationTests.test_low_confidence_conversations_skip_reply",
+      "ConversationTests.test_failures_become_fixed_guidance_without_retries",
+      "ConversationTests.test_assistant_keeps_snapshot_and_log_ids_across_independent_turns",
+      "ConversationTests.test_assistant_recovers_after_reply_failure_without_camera",
+      "ConversationTests.test_model_environment_override_and_owned_client_cleanup",
+      "ConversationTests.test_conversation_function_can_be_injected",
+      "ConversationTests.test_both_text_entrypoints_generate_replies_and_default_stt_does_not"
+    ],
+    "test_decisions_and_logs.py": [
+      "DecisionsTests.test_real_sdk_calls_decisions_then_responses_for_concrete_command",
+      "DecisionsTests.test_non_commands_and_incomplete_or_unsupported_commands_skip_planner",
+      "DecisionsTests.test_low_confidence_and_refusal_skip_planner",
+      "DecisionsTests.test_stop_uses_fixed_plan_without_image_or_second_api_request",
+      "DecisionsTests.test_missing_image_does_not_request_plan_in_assistant",
+      "DecisionsTests.test_invalid_decisions_never_fall_back_to_responses",
+      "DecisionsTests.test_api_errors_do_not_trigger_plan_or_retries",
+      "DecisionsTests.test_empty_input_uses_no_api_or_key",
+      "DecisionsTests.test_camera_unavailable_still_classifies_and_prints_non_command",
+      "DecisionsTests.test_results_usage_and_all_outputs_are_saved_with_command_ids",
+      "LogTests.test_threads_partial_lines_redaction_and_no_overwrite",
+      "LogTests.test_unhandled_exception_is_logged_and_streams_restored",
+      "LogTests.test_cli_and_legacy_entrypoint_both_classify_and_log_fixed_output",
+      "LogTests.test_argument_errors_are_logged"
+    ],
+    "test_direct_microphone.py": [
+      "DirectDetectorTests.test_short_command_completes_without_waiting_for_four_seconds",
+      "DirectDetectorTests.test_silence_and_too_short_sound_do_not_create_commands",
+      "DirectDetectorTests.test_two_utterances_have_separate_ids",
+      "DirectDetectorTests.test_flush_keeps_unfinished_command_and_capture_timestamp",
+      "DirectDetectorTests.test_long_utterance_parts_still_deliver_one_callback",
+      "DirectRuntimeTests.test_microphone_audio_reaches_whisper_unchanged_and_drains_on_stop",
+      "DirectRuntimeTests.test_stop_during_open_drains_already_captured_audio",
+      "DirectRuntimeTests.test_failed_microphone_open_closes_transcription_worker"
+    ],
+    "test_image_logs.py": [
+      "ImageLogTests.test_saved_images_match_selected_bytes_and_link_to_results",
+      "ImageLogTests.test_disk_failure_does_not_drop_commands",
+      "ImageLogTests.test_missing_camera_creates_no_image_files"
+    ],
+    "test_live_transcription.py": [
+      "QueueTests.test_preview_slot_replaces_old_tasks_without_accumulation",
+      "QueueTests.test_final_wins_and_pending_preview_is_removed",
+      "QueueTests.test_final_chunks_keep_fifo_and_previews_are_skipped_while_backlogged",
+      "QueueTests.test_close_discards_preview_and_drains_final_before_stop",
+      "QueueTests.test_no_preview_is_admitted_while_final_inference_is_running",
+      "WorkerTests.test_live_microphone_path_displays_preview_before_final_callback",
+      "WorkerTests.test_provisional_text_is_displayed_but_never_calls_final_callback",
+      "WorkerTests.test_inflight_preview_is_hidden_after_final_arrives_and_final_runs_once",
+      "PreviewAndLimitTests.test_detector_emits_throttled_bounded_snapshots_without_final_tasks",
+      "PreviewAndLimitTests.test_local_decoder_limits_and_fast_preview_beam",
+      "PreviewAndLimitTests.test_token_limit_rejects_possible_truncation_instead_of_command_execution",
+      "PreviewAndLimitTests.test_api_preview_is_disabled_without_a_paid_request",
+      "PreviewAndLimitTests.test_cli_exposes_preview_and_output_limits"
+    ],
+    "test_local_tts.py": [
+      "GateTests.test_tail_and_delayed_audio_remain_blocked",
+      "GateTests.test_queued_transcription_from_playback_never_calls_ai",
+      "GateTests.test_detector_reset_drops_partial_speech_and_preroll",
+      "GateTests.test_silero_reset_clears_recurrent_state",
+      "GateTests.test_microphone_drops_playback_and_resumes_after_tail",
+      "SelectionTests.test_result_selection_does_not_claim_execution",
+      "SelectionTests.test_long_reply_uses_complete_sentences",
+      "SelectionTests.test_recorder_audio_import_preserves_original",
+      "SelectionTests.test_two_references_use_equal_excerpts_bounded_to_fifty_seconds",
+      "PlaybackTests.test_cache_audio_log_and_playback_gate",
+      "PlaybackTests.test_failed_job_does_not_stop_next_job",
+      "PlaybackTests.test_queue_is_bounded_and_close_discards_pending",
+      "PlaybackTests.test_corrupt_cache_is_regenerated_and_voice_speed_change_cache_key",
+      "PlaybackTests.test_replay_failure_releases_gate",
+      "PlaybackTests.test_missing_voice_has_actionable_error",
+      "CLITests.test_tts_restricted_to_supported_modes_and_prepare_needs_reference",
+      "CLITests.test_assist_options_are_forwarded",
+      "CLITests.test_tts_test_uses_no_ai",
+      "CLITests.test_plan_and_audio_share_command_id",
+      "WorkerProtocolTests.test_natural_style_separates_short_greeting_but_keeps_decimals",
+      "WorkerProtocolTests.test_natural_style_changes_duration_settings_and_sentence_pause",
+      "WorkerProtocolTests.test_style_uses_separate_cache_and_cli_forwards_choice",
+      "WorkerProtocolTests.test_worker_explicitly_blocks_network",
+      "WorkerProtocolTests.test_real_subprocess_protocol_and_timeout_cleanup"
+    ],
+    "test_reference_tts.py": [
+      "ReferenceTests.test_engine_defaults_keep_old_environment_available",
+      "ReferenceTests.test_reference_selection_matches_question_and_falls_back",
+      "ReferenceTests.test_profile_rejects_transcript_audio_and_model_changes",
+      "ReferenceTests.test_changed_transcript_cannot_reuse_cached_audio",
+      "ReferenceTests.test_valid_reference_profile_uses_normal_playback_lifecycle",
+      "ReferenceTests.test_backend_passes_intact_transcript_and_both_recordings",
+      "ReferenceTests.test_curation_retains_timing_and_rejects_poor_transcript"
+    ],
+    "test_speech_quality.py": [
+      "StreamingVadTests.test_soft_short_command_is_not_discarded_by_old_rms_threshold",
+      "StreamingVadTests.test_loud_noise_without_voice_probability_is_ignored",
+      "StreamingVadTests.test_arbitrary_callback_sizes_preserve_audio_and_end_time",
+      "StreamingVadTests.test_flush_preserves_partial_silero_frame",
+      "StreamingVadTests.test_invalid_audio_is_rejected",
+      "StreamingVadTests.test_real_packaged_silero_runs_without_download_or_mutating_audio",
+      "RecognitionQualityTests.test_local_settings_and_quality_metadata",
+      "RecognitionQualityTests.test_low_quality_is_rejected_without_changing_number_or_direction",
+      "RecognitionQualityTests.test_bad_chunk_prevents_partial_command_callback",
+      "RecognitionQualityTests.test_api_is_opt_in_uses_memory_wav_and_returns_metadata",
+      "RecognitionQualityTests.test_silence_never_calls_model_or_paid_api",
+      "RecognitionQualityTests.test_invalid_settings_fail_early",
+      "MicrophoneAndCliTests.test_diagnostics_do_not_store_audio_unless_explicit_path_is_given",
+      "MicrophoneAndCliTests.test_input_selection_checks_supported_settings_and_prints_device",
+      "MicrophoneAndCliTests.test_level_meter_accumulates_and_reports_clipping",
+      "MicrophoneAndCliTests.test_cli_passes_selected_settings_to_default_and_assistant",
+      "MicrophoneAndCliTests.test_bad_option_combinations_are_rejected",
+      "MicrophoneAndCliTests.test_microphone_listing_needs_no_model_or_api",
+      "EvaluationTests.test_non_16khz_stereo_wav_is_resampled_with_installed_pyav",
+      "EvaluationTests.test_missing_audio_fails_before_model_loading",
+      "EvaluationTests.test_character_metrics_and_number_unit_equivalence",
+      "EvaluationTests.test_same_file_is_compared_and_report_contains_metrics"
+    ]
+  }
+}
