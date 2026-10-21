@@ -9,12 +9,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .action_planner import ActionPlan, create_action_plan
-from .api_common import (
+from .ai_api import (
     PlannerConnectionError, PlannerResponseError, friendly_api_error,
-    response_value, create_api_client,
+    response_value, create_api_client, create_conversation_reply,
 )
 from .session_log import as_json, command_context, record_event
-from .conversation import create_conversation_reply
 
 DECISION_MODEL = "gpt-6-luna"
 DECISION_TIMEOUT_SECONDS = 20.0

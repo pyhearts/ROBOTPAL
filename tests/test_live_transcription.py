@@ -10,9 +10,9 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from module import cli, speech, transcription, utterance
+from module import cli, speech, speech_pipeline
 from module import speech_quality as quality
-from module.live_transcription import LiveTranscriptionQueue, PreviewTask
+from module.speech_pipeline import LiveTranscriptionQueue, PreviewTask
 
 
 def preview(identity="a", text_value=0.1):
@@ -20,7 +20,7 @@ def preview(identity="a", text_value=0.1):
 
 
 def final(identity="a", text_value=0.2):
-    return utterance.TranscriptionTask(identity, -1, np.full(16000, text_value, dtype=np.float32), True, 1)
+    return speech_pipeline.TranscriptionTask(identity, -1, np.full(16000, text_value, dtype=np.float32), True, 1)
 
 
 def result(text="임시 문장", accepted=True):
@@ -148,9 +148,9 @@ class WorkerTests(unittest.TestCase):
         with patch.object(speech, "_load_transcription_dependencies", return_value=(SimpleNamespace(InputStream=Microphone), Mock())), \
                 patch.object(speech, "prepare_microphone"), \
                 patch.object(speech, "SileroProbability", return_value=lambda frame: float(np.max(frame) > 0)), \
-                patch.object(transcription, "_load_whisper_model", return_value=model), \
+                patch.object(speech_pipeline, "_load_whisper_model", return_value=model), \
                 patch.object(speech.queue, "Queue", return_value=captured), \
-                patch.object(transcription, "record_event", side_effect=log), \
+                patch.object(speech_pipeline, "record_event", side_effect=log), \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
             speech.run_live_transcription(lambda *args: callbacks.append(args))
         self.assertEqual(observations, [True])
@@ -179,7 +179,7 @@ class WorkerTests(unittest.TestCase):
             if event == "stt_preview_displayed":
                 displayed.set()
 
-        with patch.object(transcription, "record_event", side_effect=log), contextlib.redirect_stdout(output):
+        with patch.object(speech_pipeline, "record_event", side_effect=log), contextlib.redirect_stdout(output):
             worker = threading.Thread(target=speech._transcription_worker,
                 args=(transcriber, None, jobs, lambda *args: calls.append(args)))
             worker.start()

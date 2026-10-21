@@ -15,7 +15,7 @@ from openai import OpenAI
 import main
 from module import cli, speech
 import ai_action_planner
-from module import conversation, decision_router as router, session_log
+from module import ai_api, decision_router as router, session_log
 from module import vision_assistant as vision
 from module.action_planner import selected_model
 
@@ -175,8 +175,8 @@ class ConversationTests(unittest.TestCase):
     def test_model_environment_override_and_owned_client_cleanup(self):
         client = self.client()
         with patch.dict("os.environ", {"OPENAI_MODEL": "configured-model"}), \
-                patch.object(conversation, "create_api_client", return_value=client):
-            reply = conversation.create_conversation_reply("안녕")
+                patch.object(ai_api, "create_api_client", return_value=client):
+            reply = ai_api.create_conversation_reply("안녕")
         self.assertTrue(reply)
         self.assertTrue(client.is_closed())
         self.assertEqual(json.loads(self.requests[0].content)["model"], "configured-model")

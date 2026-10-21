@@ -13,7 +13,7 @@ import httpx2 as httpx
 import numpy as np
 from openai import OpenAI
 
-from module import cli, speech, transcription, utterance, legacy_speech
+from module import cli, speech, speech_pipeline, legacy_speech
 from module import action_planner as planner
 from module import vision_assistant as vision
 from module.decision_router import CommandDecision
@@ -184,9 +184,9 @@ class VoiceTests(unittest.TestCase):
     def test_transcription_without_identifier_finishes_once(self):
         tasks, received = queue.Queue(), []
         for final in [False, True]:
-            tasks.put(utterance.TranscriptionTask("utterance", 1, np.ones(1024), final, 0))
+            tasks.put(speech_pipeline.TranscriptionTask("utterance", 1, np.ones(1024), final, 0))
         tasks.put(speech._STOP)
-        with patch.object(transcription, "transcribe_utterance", side_effect=["앞으로", "30cm 이동해"]), \
+        with patch.object(speech_pipeline, "transcribe_utterance", side_effect=["앞으로", "30cm 이동해"]), \
                 contextlib.redirect_stderr(io.StringIO()):
             speech._transcription_worker(None, None, tasks, lambda *args: received.append(args))
         self.assertEqual(received, [("음성 스트림 2", "앞으로 30cm 이동해")])
@@ -211,7 +211,7 @@ class VoiceTests(unittest.TestCase):
         camera = vision.LatestFrameCamera()
         camera._frame = np.zeros((2, 2, 3), dtype=np.uint8)
         camera._captured_at = 0
-        with patch("module.camera.time.monotonic", return_value=2):
+        with patch("module.vision_assistant.time.monotonic", return_value=2):
             with self.assertRaisesRegex(RuntimeError, "오래"):
                 camera.snapshot()
 

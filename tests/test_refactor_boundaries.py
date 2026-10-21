@@ -77,7 +77,7 @@ class OptionalImportTests(unittest.TestCase):
                     assert ai_action_planner.main() == 0
             assert 'module.speech' not in sys.modules
             assert 'module.gesture' not in sys.modules
-            assert 'module.camera' not in sys.modules
+            assert 'module.vision_assistant' not in sys.modules
         ''')
 
     def test_direct_speech_does_not_import_legacy_or_tts(self):

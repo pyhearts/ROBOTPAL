@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from .session_log import as_json, record_event
 
-from .api_common import (
+from .ai_api import (
     DEFAULT_MODEL, DEFAULT_HOST, REQUEST_TIMEOUT_SECONDS, PlannerConnectionError,
     PlannerResponseError, create_api_client, selected_model, response_value,
     friendly_api_error, user_content,

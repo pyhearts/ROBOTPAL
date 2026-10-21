@@ -8,9 +8,10 @@ from typing import Callable
 import numpy as np
 from .session_log import record_event
 from .speech_quality import SpeechOptions, SileroProbability, InputMeter, prepare_microphone
-from .utterance import SAMPLE_RATE, MonoUtteranceDetector
-from .live_transcription import LiveTranscriptionQueue
-from .transcription import BLOCK_SIZE, _STOP, _transcription_worker, create_speech_transcriber, handle_transcription
+from .speech_pipeline import (
+    SAMPLE_RATE, BLOCK_SIZE, _STOP, MonoUtteranceDetector, LiveTranscriptionQueue,
+    _transcription_worker, create_speech_transcriber, handle_transcription,
+)
 
 def _load_transcription_dependencies():
     """Import only the packages needed for direct microphone transcription."""

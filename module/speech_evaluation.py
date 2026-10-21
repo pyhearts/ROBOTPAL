@@ -100,8 +100,7 @@ def load_evaluation_audio(path: Path) -> np.ndarray:
 
 def compare_transcription_settings(manifest: Path, *, options: SpeechOptions,
                                    models: list[str], beams: list[int], offline: bool = False) -> Path:
-    from .utterance import MonoUtteranceDetector
-    from .transcription import create_speech_transcriber
+    from .speech_pipeline import MonoUtteranceDetector, create_speech_transcriber
 
     rows = []
     for number, line in enumerate(manifest.read_text(encoding="utf-8-sig").splitlines(), 1):

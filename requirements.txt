@@ -1,4 +1,4 @@
--r requirements-core.txt
--r requirements-speech.txt
--r requirements-vision.txt
--r requirements-gesture.txt
+-r requirements/core.txt
+-r requirements/speech.txt
+-r requirements/vision.txt
+-r requirements/gesture.txt

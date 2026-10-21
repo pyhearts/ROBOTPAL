@@ -292,7 +292,7 @@ class SpeechTranscriber:
         return ""
 
     def _api(self, audio: np.ndarray) -> str:
-        from .api_common import PlannerConnectionError, friendly_api_error
+        from .ai_api import PlannerConnectionError, friendly_api_error
         try:
             response = self.client.audio.transcriptions.create(
                 model="gpt-transcribe", file=("utterance.wav", encode_wav(audio), "audio/wav"),

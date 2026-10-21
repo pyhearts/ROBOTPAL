@@ -2,11 +2,13 @@
 
 기본 실행은 마이크 → Silero 음성 감지 → 로컬 Whisper small → 품질 검사 순서입니다. `--assist`에서는 품질 검사를 통과한 전사만 Decisions로 전달합니다. 실제 한국어 인식 정확도 개선 폭은 같은 녹음으로 비교해야 합니다.
 
+문서의 실행 명령은 프로젝트 루트에서 실행합니다.
+
 ## 직접 마이크와 선택적 화자 분리 설치
 
-직접 마이크는 `requirements-speech.txt`로 설치합니다. 이 목록은 텍스트 API 의존성도 포함합니다. 통합 모드에는 `requirements-vision.txt`를 함께 설치합니다. 기본 실행은 `speech.py`에서 입력을 수집하고 `utterance.py`와 `transcription.py`를 통해 감지·전사를 처리하며, 화자 등록 파일과 `legacy_speech.py`를 읽지 않습니다. Silero는 Faster Whisper에 포함된 ONNX 모델을 사용하므로 기본 경로에 SpeechBrain·PyTorch가 필요하지 않습니다.
+직접 마이크는 `requirements/speech.txt`로 설치합니다. 이 목록은 텍스트 API 의존성도 포함합니다. 통합 모드에는 `requirements/vision.txt`를 함께 설치합니다. 기본 실행은 `speech.py`에서 입력을 수집하고 `speech_pipeline.py`를 통해 감지·전사를 처리하며, 화자 등록 파일과 `legacy_speech.py`를 읽지 않습니다. Silero는 Faster Whisper에 포함된 ONNX 모델을 사용하므로 기본 경로에 SpeechBrain·PyTorch가 필요하지 않습니다.
 
-화자 등록·식별·SepFormer 분리는 `requirements-legacy-speech.txt`를 추가 설치한 뒤 라이브러리에서 명시적으로 호출합니다. 이 목록은 직접 마이크 의존성도 포함합니다.
+화자 등록·식별·SepFormer 분리는 `requirements/legacy-speech.txt`를 추가 설치한 뒤 라이브러리에서 명시적으로 호출합니다. 이 목록은 직접 마이크 의존성도 포함합니다.
 
 ```python
 from module.speech import enroll_speakers, load_speaker_profiles, run_separated_transcription
@@ -138,14 +140,14 @@ Silero ONNX 모델은 faster-whisper에 포함된 파일을 사용하므로 별�
 .\.venv\Scripts\python.exe .\main.py --record-sample evaluation_audio/noise.wav --sample-seconds 3
 ```
 
-`examples/stt_eval.jsonl`에는 위 파일에 맞는 정답과 핵심 조건 예시를 준비했습니다. 각각 “앞으로 30cm 이동해”, “왼쪽으로 90도 돌아”, “멈춰”, “멈추지 마”, 무음입니다. 실제 발화에 맞게 정답을 수정하고 다양한 화자·거리·잡음을 포함해 50~100개 정도로 확장할 수 있습니다.
+`docs/stt_eval.jsonl`에는 위 파일에 맞는 정답과 핵심 조건 예시를 준비했습니다. 각각 “앞으로 30cm 이동해”, “왼쪽으로 90도 돌아”, “멈춰”, “멈추지 마”, 무음입니다. 실제 발화에 맞게 정답을 수정하고 다양한 화자·거리·잡음을 포함해 50~100개 정도로 확장할 수 있습니다.
 
 ```powershell
 # 동일한 녹음들을 small의 beam 1,3,5로 비교
-.\.venv\Scripts\python.exe .\main.py --compare-stt examples/stt_eval.jsonl --compare-models small --compare-beams 1,3,5
+.\.venv\Scripts\python.exe .\main.py --compare-stt docs/stt_eval.jsonl --compare-models small --compare-beams 1,3,5
 
 # 모델까지 비교하려면 (큰 모델의 CPU 지연·메모리에 유의)
-.\.venv\Scripts\python.exe .\main.py --compare-stt examples/stt_eval.jsonl --compare-models small,medium --compare-beams 3
+.\.venv\Scripts\python.exe .\main.py --compare-stt docs/stt_eval.jsonl --compare-models small,medium --compare-beams 3
 ```
 
 `reports/stt_*.json`에 각 파일의 정답·예측·거절 여부, 문자 오류율, 문장 일치율, 방향·거리·각도·정지·부정 표현의 명시된 핵심 조건 일치율, 무음 오인식 수, 처리 시간 중앙값·95백분위수를 기록합니다. 평가 시간에는 파일을 재생하며 기다리는 시간이 없으므로 실제 실시간 응답 시간과는 다릅니다. 모델 초기 로딩 시간은 평가 시간에서 제외합니다. 실제 응답 시간은 라이브 로그로 확인하세요.
@@ -159,7 +161,7 @@ Silero ONNX 모델은 faster-whisper에 포함된 파일을 사용하므로 별�
 .\.venv\Scripts\python.exe .\main.py --assist --stt-backend openai --input-device 1
 
 # 준비한 동일 녹음의 API 전사 결과를 로컬 보고서와 비교
-.\.venv\Scripts\python.exe .\main.py --compare-stt examples/stt_eval.jsonl --stt-backend openai
+.\.venv\Scripts\python.exe .\main.py --compare-stt docs/stt_eval.jsonl --stt-backend openai
 ```
 
 `gpt-transcribe`에 한국어 및 용어 힌트와 메모리에서 만든 WAV를 전달합니다. 외부 VAD로 음성 구간을 고른 후 호출하며, 파일은 디스크에 임시 저장하지 않습니다. 전사 API 사용료와 음성 전송이 발생합니다. 기본은 로컬이고, 로컬 실패 시 자동 API 재시도도 없습니다. API 평가에서는 중복 과금을 막기 위해 한 번에 한 조합만 허용합니다.

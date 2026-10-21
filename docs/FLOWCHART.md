@@ -1,6 +1,6 @@
 # ROBOTPAL 변경 후 동작 순서도
 
-화자 등록·식별과 SepFormer 분리는 기본 비활성화이며, 마이크 입력을 직접 전사하고 Decisions로 일반 대화·장면 질문·행동 명령을 나누어 답변 또는 행동 계획 API를 호출하고 모든 실행 출력을 로그에 기록합니다. 수정 전 상세 분석과 순서도는 `backups/before_api_20261018_105455/FLOWCHART.md`에 보존되어 있습니다.
+화자 등록·식별과 SepFormer 분리는 기본 비활성화이며, 마이크 입력을 직접 전사하고 Decisions로 일반 대화·장면 질문·행동 명령을 나누어 답변 또는 행동 계획 API를 호출하고 모든 실행 출력을 로그에 기록합니다. 수정 전 상세 분석과 순서도는 `archive/backups/before_api_20261018_105455/FLOWCHART.md`에 보존되어 있습니다.
 
 ## 1. 전체 실행
 
@@ -57,7 +57,7 @@ flowchart TD
 
 기본 전사와 통합 모드는 SepFormer·ECAPA·화자 등록 파일을 사용하지 않습니다. 4초 분리 창, 채널 연결, 중첩 혼합, 분리 작업자와 분리 속도 측정이 실행되지 않습니다. 겹친 목소리는 분리하지 않고 하나의 마이크 입력으로 처리합니다. 출력은 `[음성 입력]`입니다. 기본 Silero 음성 확률 기준은 0.5이고, 시작 전 약 0.4초를 보존하며 짧은 명령을 위해 최소 음성을 0.12초로 조정했습니다. 로컬 최종 전사는 beam 3·한국어 지정·temperature 0·명령 용어 힌트를 사용합니다. 임시 전사는 beam 1이며 최종 작업을 우선합니다. 디코더에 반복 억제와 오디오 길이에 따른 출력 제한을 적용하고, 상한에 가까운 최종 결과는 보류합니다. 내부 VAD는 기본 비활성화합니다.
 
-종료 시 마지막 오디오 수집 시각을 유지해 발화를 마무리합니다. Whisper 전사가 느리면 별도 전사 큐의 대기는 발생할 수 있습니다. 기존 분리 코드는 `run_separated_transcription`에 남아 있으며 기본 실행에서 호출하지 않습니다. 변경 직전 원본은 `backups/before_direct_mic_20261018_110826/`에 보존했습니다.
+종료 시 마지막 오디오 수집 시각을 유지해 발화를 마무리합니다. Whisper 전사가 느리면 별도 전사 큐의 대기는 발생할 수 있습니다. 기존 분리 코드는 `run_separated_transcription`에 남아 있으며 기본 실행에서 호출하지 않습니다. 변경 직전 원본은 `archive/backups/before_direct_mic_20261018_110826/`에 보존했습니다.
 
 ## 3. 모든 화자의 음성·영상 명령 접수
 
@@ -171,7 +171,7 @@ flowchart LR
     E --> F
 ```
 
-`module/session_log.py`가 실행별 기록을 담당하고 `module/decision_router.py`가 분류와 계획 분기를 담당합니다. API 키는 가리고 원본 오디오는 기록하지 않습니다. --assist에서 최종 전사 접수 시 선택한 이미지는 JPEG 파일로 저장하고 JSONL에는 상대 경로·명령 ID·해시를 기록합니다. 기존 버전은 `backups/before_decisions_20261018_113345/`에 보존했습니다.
+`module/session_log.py`가 실행별 기록을 담당하고 `module/decision_router.py`가 분류와 계획 분기를 담당합니다. API 키는 가리고 원본 오디오는 기록하지 않습니다. --assist에서 최종 전사 접수 시 선택한 이미지는 JPEG 파일로 저장하고 JSONL에는 상대 경로·명령 ID·해시를 기록합니다. 기존 버전은 `archive/backups/before_decisions_20261018_113345/`에 보존했습니다.
 
 ## 8. 진단 및 설정 비교
 
@@ -179,11 +179,11 @@ flowchart LR
 
 ## 9. 임시 인식과 최종 작업의 우선순위
 
-`module/live_transcription.py`는 최종·내부 조각 전사를 FIFO로 보존하고 임시 대기는 최신 한 개로 교체합니다. 최종 작업 처리 중에는 임시 요청을 받지 않습니다. 늦은 임시 출력은 숨기고 모든 명령 콜백은 최종·품질 확인 후 한 번만 호출합니다. 화면 상태와 임시 결과도 기존 로그에 기록합니다. 자세한 간격·출력 제한 설정은 `SPEECH_GUIDE.md`를 참고하세요.
+`module/speech_pipeline.py`는 최종·내부 조각 전사를 FIFO로 보존하고 임시 대기는 최신 한 개로 교체합니다. 최종 작업 처리 중에는 임시 요청을 받지 않습니다. 늦은 임시 출력은 숨기고 모든 명령 콜백은 최종·품질 확인 후 한 번만 호출합니다. 화면 상태와 임시 결과도 기존 로그에 기록합니다. 자세한 간격·출력 제한 설정은 `SPEECH_GUIDE.md`를 참고하세요.
 
 ## 모듈 경계와 종료
 
-`main.py`는 로그 세션을 열고 `module/cli.py`에 실행을 위임합니다. 직접 마이크 수집은 `speech.py`, 발화 상태는 `utterance.py`, 전사 작업자와 모델 로딩은 `transcription.py`가 담당합니다. `legacy_speech.py`는 명시적 호출에만 사용하며 공유 발화·전사 모듈을 참조합니다. API 설정·오류·입력 구성은 `api_common.py`, 카메라 수집은 `camera.py`에 있습니다.
+`main.py`는 로그 세션을 열고 `module/cli.py`에 실행을 위임합니다. 직접 마이크 수집은 `speech.py`, 발화 상태·전사 대기열·작업자와 모델 로딩은 `speech_pipeline.py`가 담당합니다. `legacy_speech.py`는 명시적 호출에만 사용하며 공유 발화·전사 모듈을 참조합니다. API 설정·오류·입력 구성과 대화 응답은 `ai_api.py`, 카메라 수집과 명령 접수는 `vision_assistant.py`에 있습니다.
 
 ```mermaid
 flowchart LR

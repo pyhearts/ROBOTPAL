@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from module import cli, speech, speech_quality, vision_assistant, transcription, utterance
+from module import cli, speech, speech_quality, vision_assistant, speech_pipeline
 from module import speech_quality as quality
 from module import speech_evaluation as evaluation
 
@@ -46,7 +46,7 @@ class StreamingVadTests(unittest.TestCase):
         tasks = detector.process(np.concatenate([audio(0.16), audio(0.8, 0)]), 0)
         self.assertEqual(len(tasks), 1)
         self.assertTrue(tasks[0].final)
-        self.assertLess(np.max(tasks[0].audio), utterance.VAD_THRESHOLD)
+        self.assertLess(np.max(tasks[0].audio), speech_pipeline.VAD_THRESHOLD)
         self.assertAlmostEqual(tasks[0].speech_end_time, 0.16)
 
     def test_loud_noise_without_voice_probability_is_ignored(self):
@@ -128,8 +128,8 @@ class RecognitionQualityTests(unittest.TestCase):
             (iter([segment("30cm", avg_logprob=-2)]), SimpleNamespace()),
         ]
         jobs, received = queue.Queue(), []
-        jobs.put(utterance.TranscriptionTask("same", -1, audio(1), False, 0))
-        jobs.put(utterance.TranscriptionTask("same", -1, audio(1), True, 0))
+        jobs.put(speech_pipeline.TranscriptionTask("same", -1, audio(1), False, 0))
+        jobs.put(speech_pipeline.TranscriptionTask("same", -1, audio(1), True, 0))
         jobs.put(speech._STOP)
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
@@ -243,7 +243,7 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             manifest = Path(folder) / "bad.jsonl"
             manifest.write_text(json.dumps({"audio": "missing.wav", "text": "멈춰"}), encoding="utf-8")
-            with patch.object(transcription, "create_speech_transcriber") as create:
+            with patch.object(speech_pipeline, "create_speech_transcriber") as create:
                 with self.assertRaises(ValueError):
                     evaluation.compare_transcription_settings(manifest, options=quality.SpeechOptions(), models=["small"], beams=[3])
             create.assert_not_called()
@@ -266,7 +266,7 @@ class EvaluationTests(unittest.TestCase):
             manifest = root / "manifest.jsonl"
             manifest.write_text(json.dumps({"audio": "sample.wav", "text": "앞으로 30cm 이동해",
                                            "fields": {"direction": "forward", "distance_cm": 30}}, ensure_ascii=False), encoding="utf-8")
-            with patch.object(transcription, "create_speech_transcriber", return_value=fake), \
+            with patch.object(speech_pipeline, "create_speech_transcriber", return_value=fake), \
                     patch.object(evaluation, "SileroProbability", return_value=lambda frame: float(np.max(np.abs(frame)) > 0)), \
                     contextlib.redirect_stdout(io.StringIO()):
                 report_path = evaluation.compare_transcription_settings(

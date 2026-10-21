@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 import numpy as np
-from .utterance import SAMPLE_RATE, VAD_BLOCK_SAMPLES, VAD_THRESHOLD, TranscriptionTask, PerStreamUtteranceDetector, _rms
-from .transcription import BLOCK_SIZE, _STOP, _load_whisper_model, _transcription_worker, handle_transcription
+from .speech_pipeline import (
+    SAMPLE_RATE, VAD_BLOCK_SAMPLES, VAD_THRESHOLD, TranscriptionTask,
+    PerStreamUtteranceDetector, _rms, BLOCK_SIZE, _STOP, _load_whisper_model,
+    _transcription_worker, handle_transcription,
+)
 
 WINDOW_SECONDS = 4.0
 HOP_SECONDS = 3.0
@@ -367,7 +370,7 @@ def _load_runtime_dependencies():
     except ImportError as exc:
         raise RuntimeError(
             f"필요한 패키지({exc.name or '필수 패키지'})를 찾을 수 없습니다. 다음 명령으로 설치해 주세요.\n"
-            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements-legacy-speech.txt"
+            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements/legacy-speech.txt"
         ) from exc
     return sd, torch, WhisperModel, SepformerSeparation, SpeakerRecognition, LocalStrategy
 
@@ -553,5 +556,3 @@ def run_separated_transcription(
         transcript_thread.join()
         if interrupted:
             print("음성 인식을 종료했습니다.")
-
-

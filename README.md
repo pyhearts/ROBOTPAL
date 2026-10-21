@@ -14,11 +14,11 @@ Python 3.12 환경에서 기본 기능 전체를 설치합니다. 화자 분리�
 
 | 설치 파일 | 용도 |
 |---|---|
-| `requirements-core.txt` | 텍스트 분류·대화·행동 계획 |
-| `requirements-speech.txt` | 직접 마이크·VAD·전사, core 포함 |
-| `requirements-vision.txt` | 카메라·JPEG 처리 |
-| `requirements-gesture.txt` | 손 모양 인식, vision 포함 |
-| `requirements-legacy-speech.txt` | 선택적 화자 등록·식별·SepFormer, speech 포함 |
+| `requirements/core.txt` | 텍스트 분류·대화·행동 계획 |
+| `requirements/speech.txt` | 직접 마이크·VAD·전사, core 포함 |
+| `requirements/vision.txt` | 카메라·JPEG 처리 |
+| `requirements/gesture.txt` | 손 모양 인식, vision 포함 |
+| `requirements/legacy-speech.txt` | 선택적 화자 등록·식별·SepFormer, speech 포함 |
 
 통합 모드는 speech와 vision이 필요합니다. 기본 전사는 Faster Whisper에 포함된 Silero ONNX 모델을 사용하며 PyTorch·SpeechBrain을 직접 불러오지 않습니다. 로컬 Whisper의 첫 실행에는 모델 다운로드가 필요합니다.
 
@@ -85,12 +85,12 @@ $env:OPENAI_MODEL = "gpt-6-luna"
 
 Ctrl+C에서는 입력을 중단하고 마지막 발화의 전사를 마친 뒤 카메라를 닫고 접수된 AI 명령을 순서대로 마무리합니다. API가 느리면 종료까지 시간이 걸릴 수 있습니다. 정지도 FIFO로 계획을 출력하며 하드웨어 긴급 정지 기능은 아닙니다.
 
-음성 설정·진단·녹음·동일 음원 비교는 [SPEECH_GUIDE.md](SPEECH_GUIDE.md)에 설명합니다.
+음성 설정·진단·녹음·동일 음원 비교는 [SPEECH_GUIDE.md](docs/SPEECH_GUIDE.md)에 설명합니다.
 
 ## 선택적 화자 등록·분리
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-legacy-speech.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements/legacy-speech.txt
 ```
 
 ```python
@@ -127,4 +127,11 @@ with capture_output():
 
 외부 API·실제 장치 없이 회귀 테스트를 수행합니다. 보관 코드는 기본 테스트 대상에서 제외합니다. 실제 인식 품질·카메라·장치 연결은 별도 확인이 필요합니다.
 
-본체는 CLI, 직접 마이크, 공유 발화·전사 작업자, 선택적 과거 음성, 카메라, 명령 처리, API 공통 처리로 나뉩니다. [FLOWCHART.md](FLOWCHART.md)에 실행 흐름을 기록합니다. Arduino 스케치는 독립 실행되는 서보 중앙 신호 설정이며 Python과 연결되어 있지 않습니다. 기존 `backups/`와 모델·가상환경·녹음 자산은 그대로 유지합니다.
+본체는 CLI, 직접 마이크, 공유 발화·전사 작업자, 선택적 과거 음성, 카메라, 명령 처리, API 공통 처리로 나뉩니다. [FLOWCHART.md](docs/FLOWCHART.md)에 실행 흐름을 기록합니다. Arduino 스케치는 독립 실행되는 서보 중앙 신호 설정이며 Python과 연결되어 있지 않습니다. 과거 백업은 `archive/backups/`에 모았으며 모델·가상환경·녹음 자산은 원래 위치에 유지합니다.
+
+
+## 파일 배치
+
+실행 진입점은 최상위에, 활성 코드는 `module/`, 동작별 테스트는 `tests/`에 둡니다. 발화 상태·대기열·전사 작업자는 `speech_pipeline.py`, API 공통 처리·대화 응답은 `ai_api.py`, 카메라와 음성·영상 접수는 `vision_assistant.py`로 묶었습니다. 활성 구현 모듈은 초기화 파일을 제외하고 13개입니다.
+
+상세 문서와 평가 예제는 `docs/`, 선택 설치 목록은 `requirements/`, 과거 코드는 [archive/](archive/README.md)에 있습니다. [정리 기록](docs/REFACTORING_PLAN.md)에 통합 내용과 검증 결과를 기록했습니다. 문서의 실행 명령은 프로젝트 루트에서 실행합니다.
