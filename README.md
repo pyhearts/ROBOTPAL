@@ -25,8 +25,11 @@ Python 3.12 환경에서 기본 기능 전체를 설치합니다. 화자 분리�
 ## 주요 실행법
 
 ```powershell
-# 음성 전사만 실행 — API 키 불필요
+# 기본 실행: 음성·카메라로 AI 답변 또는 행동 계획 생성 — API 키 필요
 .\.venv\Scripts\python.exe .\main.py
+
+# 음성 전사만 실행 — 로컬 전사는 API 키 불필요
+.\.venv\Scripts\python.exe .\main.py --transcribe-only
 
 # 마이크 번호 확인과 입력 선택
 .\.venv\Scripts\python.exe .\main.py --list-mics
@@ -47,7 +50,9 @@ Python 3.12 환경에서 기본 기능 전체를 설치합니다. 화자 분리�
 .\.venv\Scripts\python.exe .\main.py --help
 ```
 
-`ai_action_planner.py`도 같은 텍스트 처리 경로를 사용하는 대화형 진입점입니다. 기본 실행법과 `--assist`, `--plan`, `--gesture`는 유지합니다. TTS는 코드 보관 상태이며 [복원 안내](archive/tts/RESTORE.md)를 참고하세요.
+옵션 없이 실행하면 `--assist`와 같은 AI 모드로 동작합니다. 최종 인식한 문장을 AI에 전달하고 `[AI 답변]`을 화면에 출력합니다. 카메라가 없어도 일반 대화와 정지는 처리합니다. API 키가 없으면 마이크를 열기 전에 설정 오류를 표시합니다. 전사만 필요하면 `--transcribe-only`를 사용하세요.
+
+`ai_action_planner.py`도 같은 텍스트 처리 경로를 사용하는 대화형 진입점입니다. 답변을 소리로 읽어 주는 TTS는 코드 보관 상태이며 [복원 안내](archive/tts/RESTORE.md)를 참고하세요.
 
 ## API 설정과 처리 정책
 

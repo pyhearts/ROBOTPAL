@@ -205,9 +205,48 @@ class ConversationTests(unittest.TestCase):
                 self.assertEqual(len(self.requests), 2)
         with patch.object(speech, "run_live_transcription") as transcribe, \
                 patch.object(router, "create_api_client") as create:
-            self.assertEqual(cli.run([]), 0)
+            self.assertEqual(cli.run(["--transcribe-only"]), 0)
         transcribe.assert_called_once_with()
         create.assert_not_called()
+
+    def test_default_cli_transcription_reaches_ai_and_prints_reply_without_camera(self):
+        client = self.client()
+        camera = Mock()
+        camera.start.side_effect = RuntimeError("no camera")
+        camera.snapshot.side_effect = RuntimeError("no camera")
+
+        def transcribe(**kwargs):
+            kwargs["on_transcription"]("음성 입력", "안녕")
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(session_log, "LOG_ROOT", Path(folder)), \
+                patch.object(vision, "create_api_client", return_value=client), \
+                patch.object(vision, "LatestFrameCamera", return_value=camera), \
+                patch.object(vision, "run_live_transcription", side_effect=transcribe), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main.main([]), 0)
+        self.assertIn("[AI 답변] 안녕하세요", output.getvalue())
+        self.assertEqual([r.url.path for r in self.requests], ["/v1/decisions", "/v1/responses"])
+        self.assertTrue(client.is_closed())
+        camera.close.assert_called_once()
+
+    def test_default_cli_missing_key_fails_before_opening_microphone(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": ""}), \
+                patch.object(vision, "run_live_transcription") as transcribe, \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(cli.run([]), 1)
+        self.assertIn("OPENAI_API_KEY", error.getvalue())
+        transcribe.assert_not_called()
+
+    def test_default_ai_camera_selection_and_transcription_mode_validation(self):
+        with patch.object(vision, "run_voice_vision_assistant") as assistant:
+            self.assertEqual(cli.run(["--camera", "2"]), 0)
+        assistant.assert_called_once_with(camera_index=2)
+        for args in [["--transcribe-only", "--assist"], ["--transcribe-only", "--camera", "0"]]:
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    cli.run(args)
 
 
 if __name__ == "__main__":

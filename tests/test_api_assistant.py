@@ -219,9 +219,9 @@ class VoiceTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 cli.run(["--enroll"])
-        with patch.object(speech, "run_live_transcription") as run:
+        with patch.object(vision, "run_voice_vision_assistant") as run:
             self.assertEqual(cli.run([]), 0)
-        run.assert_called_once_with()
+        run.assert_called_once_with(camera_index=0)
 
     def test_assistant_start_and_cleanup_use_no_profile(self):
         client, camera, assistant = Mock(), Mock(), Mock()

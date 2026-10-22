@@ -202,7 +202,7 @@ class MicrophoneAndCliTests(unittest.TestCase):
         self.assertIn("찌그러집니다", output.getvalue())
 
     def test_cli_passes_selected_settings_to_default_and_assistant(self):
-        with patch.object(speech, "run_live_transcription") as run:
+        with patch.object(vision_assistant, "run_voice_vision_assistant") as run:
             self.assertEqual(cli.run(["--input-device", "2", "--stt-beam", "5", "--show-levels"]), 0)
         options = run.call_args.kwargs["options"]
         self.assertEqual(options.input_device, 2)

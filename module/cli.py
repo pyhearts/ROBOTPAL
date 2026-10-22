@@ -11,7 +11,8 @@ def _build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--gesture", action="store_true", help="웹캠 손 모양 인식을 실행합니다.")
     mode.add_argument("--plan", action="store_true", help="텍스트 명령의 로봇 행동 계획을 생성합니다.")
-    mode.add_argument("--assist", action="store_true", help="모든 화자의 음성과 최신 카메라 영상을 OpenAI API로 처리합니다.")
+    mode.add_argument("--assist", action="store_true", help="음성과 최신 카메라 영상으로 AI 답변을 생성합니다 (기본 모드).")
+    mode.add_argument("--transcribe-only", action="store_true", help="AI 답변 없이 음성을 텍스트로만 전사합니다 (로컬 전사는 API 키 불필요).")
     mode.add_argument("--list-mics", action="store_true", help="마이크 장치 번호를 표시합니다.")
     mode.add_argument("--diagnose-mic", action="store_true", help="녹음 저장 없이 마이크 음량을 진단합니다.")
     mode.add_argument("--record-sample", type=Path, help="비교 평가용 WAV를 명시적으로 녹음·저장합니다.")
@@ -51,8 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_options(parser, args, supplied_flags):
-    if "--camera" in supplied_flags and not (args.gesture or args.assist):
-        parser.error("--camera는 --gesture 또는 --assist와 함께 사용해야 합니다.")
+    if "--camera" in supplied_flags and (
+        args.plan or args.transcribe_only or args.list_mics or args.diagnose_mic
+        or args.record_sample is not None or args.compare_stt is not None
+    ):
+        parser.error("--camera는 기본 AI 모드, --assist 또는 --gesture와 함께 사용해야 합니다.")
     if supplied_flags & {"--preview", "--rule-set"} and not args.gesture:
         parser.error("--preview, --rule-set은 --gesture와 함께 사용해야 합니다.")
     if args.command is not None and not args.plan:
@@ -64,7 +68,7 @@ def _validate_options(parser, args, supplied_flags):
                  "--whisper-vad", "--show-levels", "--stt-offline", "--stt-min-logprob", "--stt-max-no-speech",
                  "--no-live-preview", "--preview-interval", "--preview-window", "--stt-max-tokens"}
     if supplied_flags & stt_flags and (args.plan or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample):
-        parser.error("전사 설정은 기본 음성 모드, --assist, --compare-stt에서만 사용합니다.")
+        parser.error("전사 설정은 기본 AI 모드, --assist, --transcribe-only, --compare-stt에서만 사용합니다.")
     if "--input-device" in supplied_flags and (args.plan or args.gesture or args.list_mics or args.compare_stt):
         parser.error("--input-device는 실시간 음성 모드 또는 마이크 진단·녹음에서 사용합니다.")
     if supplied_flags & {"--compare-models", "--compare-beams"} and not args.compare_stt:
@@ -124,12 +128,13 @@ def _dispatch(args, supplied_flags, stt_flags):
         speech_kwargs["options"] = options
     if args.stt_offline:
         speech_kwargs["offline"] = True
-    if args.assist:
+    if args.transcribe_only:
+        from .speech import run_live_transcription
+        print("전사 전용 모드입니다. AI 답변은 생성하지 않습니다. AI와 대화하려면 --transcribe-only 없이 실행해 주세요.", flush=True)
+        run_live_transcription(**speech_kwargs)
+    else:
         from .vision_assistant import run_voice_vision_assistant
         run_voice_vision_assistant(camera_index=args.camera, **speech_kwargs)
-    else:
-        from .speech import run_live_transcription
-        run_live_transcription(**speech_kwargs)
     return 0
 
 

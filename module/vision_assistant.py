@@ -273,6 +273,7 @@ def run_voice_vision_assistant(camera_index: int = 0, *, options: SpeechOptions 
             print("영상 없이 일반 대화와 정지를 처리합니다. 장면 질문과 영상이 필요한 행동 계획은 안내만 출력합니다.", flush=True)
         assistant.start()
         print(f"음성·영상 AI 준비 완료: {model} / 화자 등록 없이 모든 음성을 처리합니다.", flush=True)
+        print("최종 인식한 문장을 AI에 전송하고 답변을 화면에 표시합니다. 음성으로 읽어 주는 기능은 비활성화되어 있습니다.", flush=True)
         print("Decisions에는 텍스트만 전송합니다. 일반 대화는 텍스트로 답하고 장면 질문·행동 명령에만 사진을 전달합니다.", flush=True)
         speech_kwargs = {}
         if options is not None:

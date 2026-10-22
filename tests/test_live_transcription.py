@@ -286,7 +286,7 @@ class PreviewAndLimitTests(unittest.TestCase):
 
     def test_cli_exposes_preview_and_output_limits(self):
         with patch.object(speech, "run_live_transcription") as run:
-            self.assertEqual(cli.run(["--no-live-preview", "--stt-max-tokens", "64"]), 0)
+            self.assertEqual(cli.run(["--transcribe-only", "--no-live-preview", "--stt-max-tokens", "64"]), 0)
         options = run.call_args.kwargs["options"]
         self.assertFalse(options.live_preview)
         self.assertEqual(options.max_output_tokens, 64)
