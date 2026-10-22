@@ -4,7 +4,10 @@ from __future__ import annotations
 import base64
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 from .session_log import as_json, record_event
 
@@ -38,7 +41,7 @@ class PlannerConnectionError(RuntimeError):
     """Raised when API configuration or the OpenAI service is unavailable."""
 
 
-def create_api_client() -> Any:
+def create_api_client() -> OpenAI:
     """Create an OpenAI client without logging or persisting credentials."""
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:

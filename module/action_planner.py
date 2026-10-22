@@ -123,7 +123,7 @@ def create_action_plan(
         return _invalid_plan("명령이 비어 있습니다. 수행할 작업을 구체적으로 입력해 주세요.")
     content = user_content(normalized_command, image)
     owns_client = client is None
-    if owns_client:
+    if client is None:
         client = create_api_client()
     selected = selected_model(model)
     started = time.monotonic()
