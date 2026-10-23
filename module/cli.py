@@ -11,13 +11,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--gesture", action="store_true", help="웹캠 손 모양 인식을 실행합니다.")
     mode.add_argument("--plan", action="store_true", help="텍스트 명령의 로봇 행동 계획을 생성합니다.")
+    mode.add_argument("--execute", action="store_true", help="텍스트 명령을 가상 8족 장치에서 실행합니다 (모터 출력 없음).")
+    mode.add_argument("--execute-voice", action="store_true", help="최종 음성 명령을 카메라 없이 가상 장치에서 실행합니다.")
     mode.add_argument("--assist", action="store_true", help="음성과 최신 카메라 영상으로 AI 답변을 생성합니다 (기본 모드).")
     mode.add_argument("--transcribe-only", action="store_true", help="AI 답변 없이 음성을 텍스트로만 전사합니다 (로컬 전사는 API 키 불필요).")
     mode.add_argument("--list-mics", action="store_true", help="마이크 장치 번호를 표시합니다.")
     mode.add_argument("--diagnose-mic", action="store_true", help="녹음 저장 없이 마이크 음량을 진단합니다.")
     mode.add_argument("--record-sample", type=Path, help="비교 평가용 WAV를 명시적으로 녹음·저장합니다.")
     mode.add_argument("--compare-stt", type=Path, help="정답 JSONL 목록으로 전사 설정을 비교합니다.")
-    parser.add_argument("--command", help="--plan에 전달할 명령 (생략하면 입력을 요청합니다)")
+    parser.add_argument("--command", help="--plan 또는 --execute에 전달할 명령 (생략하면 입력을 요청합니다)")
     parser.add_argument("--camera", type=int, default=0, help="사용할 카메라 번호 (기본값: 0)")
     parser.add_argument("--preview", action="store_true", help="랜드마크 미리보기 창을 표시합니다.")
     parser.add_argument("--input-device", type=int, help="사용할 마이크 번호 (--list-mics로 확인)")
@@ -53,23 +55,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _validate_options(parser, args, supplied_flags):
     if "--camera" in supplied_flags and (
-        args.plan or args.transcribe_only or args.list_mics or args.diagnose_mic
+        args.plan or args.execute or args.execute_voice or args.transcribe_only or args.list_mics or args.diagnose_mic
         or args.record_sample is not None or args.compare_stt is not None
     ):
         parser.error("--camera는 기본 AI 모드, --assist 또는 --gesture와 함께 사용해야 합니다.")
     if supplied_flags & {"--preview", "--rule-set"} and not args.gesture:
         parser.error("--preview, --rule-set은 --gesture와 함께 사용해야 합니다.")
-    if args.command is not None and not args.plan:
-        parser.error("--command는 --plan과 함께 사용해야 합니다.")
+    if args.command is not None and not (args.plan or args.execute):
+        parser.error("--command는 --plan 또는 --execute와 함께 사용해야 합니다.")
     if args.camera < 0:
         parser.error("--camera는 0 이상의 정수여야 합니다.")
     stt_flags = {"--stt-backend", "--stt-model", "--stt-device", "--stt-compute", "--stt-beam",
                  "--vad-threshold", "--speech-pre-roll", "--speech-silence", "--speech-min-duration",
                  "--whisper-vad", "--show-levels", "--stt-offline", "--stt-min-logprob", "--stt-max-no-speech",
                  "--no-live-preview", "--preview-interval", "--preview-window", "--stt-max-tokens"}
-    if supplied_flags & stt_flags and (args.plan or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample):
+    if supplied_flags & stt_flags and (args.plan or args.execute or args.gesture or args.list_mics or args.diagnose_mic or args.record_sample):
         parser.error("전사 설정은 기본 AI 모드, --assist, --transcribe-only, --compare-stt에서만 사용합니다.")
-    if "--input-device" in supplied_flags and (args.plan or args.gesture or args.list_mics or args.compare_stt):
+    if "--input-device" in supplied_flags and (args.plan or args.execute or args.gesture or args.list_mics or args.compare_stt):
         parser.error("--input-device는 실시간 음성 모드 또는 마이크 진단·녹음에서 사용합니다.")
     if supplied_flags & {"--compare-models", "--compare-beams"} and not args.compare_stt:
         parser.error("비교 설정은 --compare-stt와 함께 사용해야 합니다.")
@@ -100,6 +102,9 @@ def run_text_command(command: str) -> int:
 
 
 def _dispatch(args, supplied_flags, stt_flags):
+    if args.execute:
+        from .execution_runtime import run_execution
+        return run_execution(command=args.command)
     if args.plan:
         return run_text_command(args.command if args.command is not None else input("로봇 명령을 입력하세요: "))
     if args.gesture:
@@ -128,6 +133,9 @@ def _dispatch(args, supplied_flags, stt_flags):
         speech_kwargs["options"] = options
     if args.stt_offline:
         speech_kwargs["offline"] = True
+    if args.execute_voice:
+        from .execution_runtime import run_execution
+        return run_execution(voice=True, speech_kwargs=speech_kwargs)
     if args.transcribe_only:
         from .speech import run_live_transcription
         print("전사 전용 모드입니다. AI 답변은 생성하지 않습니다. AI와 대화하려면 --transcribe-only 없이 실행해 주세요.", flush=True)
